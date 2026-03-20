@@ -3,7 +3,7 @@
 
 *-pthread
 
-./tests/[0-9][0-9]-*
+tests/[0-9][0-9]-*
 
 install/*
 !install/bin/
@@ -17,6 +17,7 @@ install/*
 *~
 *.swp
 .DS_Store
+*.dSYM/
 
 *.csv
 *.png
