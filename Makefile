@@ -36,7 +36,7 @@ src/%.o: src/%.c src/thread.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 tests/%: tests/%.c $(LIB_NAME)
-	$(CC) $(CFLAGS) $< -o $@ -L. -lthread -Wl,-rpath=$(abspath .)
+	$(CC) $(CFLAGS) $< -o $@ -L. -lthread
 
 pthreads: $(TEST_PTHREAD_BINS)
 
@@ -44,12 +44,10 @@ tests/%-pthread: tests/%.c
 	$(CC) $(CFLAGS) -DUSE_PTHREAD $< -o $@ -lpthread
 
 check: all
-	for t in $(TEST_BINS); do ./$$t || exit 1; done
+	./scripts/run_tests.sh
 
 valgrind: all
-	for t in $(TEST_BINS); do \
-		valgrind --leak-check=full --show-reachable=yes --track-origins=yes ./$$t; \
-	done
+	./scripts/run_valgrind.sh
 
 graphs: all pthreads
 	python3 scripts/generate_graphs.py
@@ -63,6 +61,6 @@ install: all pthreads
 clean:
 	rm -f $(LIB_OBJ) $(LIB_NAME)
 	rm -f $(TEST_BINS) $(TEST_PTHREAD_BINS)
-	rm -f install/*
+	rm -f install/lib/* install/bin/*
 
 .PHONY: all clean valgrind check pthreads graphs install
