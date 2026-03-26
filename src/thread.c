@@ -4,7 +4,7 @@
 #include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h> 
-
+#include <valgrind/valgrind.h>
 
 #define STACK_SIZE 65536
 
@@ -64,6 +64,11 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg) {
 
     makecontext(&t->ctx, (void (*)())thread_start, 2, func, arg);
 
+    t->valgrind_stackid = VALGRIND_STACK_REGISTER(
+        t->ctx.uc_stack.ss_sp,
+        t->ctx.uc_stack.ss_sp + t->ctx.uc_stack.ss_size
+    );
+
     sched_enqueue(t);
 
     *newthread = (thread_t)t;
@@ -111,6 +116,8 @@ int thread_join(thread_t thread, void **retval) {
     if (retval) {
         *retval = t->retval;
     }
+
+    VALGRIND_STACK_DEREGISTER(t->valgrind_stackid);
 
     free(t->stack);
     free(t);
@@ -167,15 +174,13 @@ __attribute__((destructor)) static void cleanup_system(void) {
     while (!sched_empty()) {
         thread_m *t = sched_dequeue();
         if (t->stack != NULL) {
+            VALGRIND_STACK_DEREGISTER(t->valgrind_stackid);
             free(t->stack);
         }
         free(t);
     }
 
     if (current != NULL) {
-        if (current->stack != NULL) {
-            free(current->stack);
-        }
         free(current);
         current = NULL; 
     }
