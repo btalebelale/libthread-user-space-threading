@@ -62,5 +62,6 @@ clean:
 	rm -f $(LIB_OBJ) $(LIB_NAME)
 	rm -f $(TEST_BINS) $(TEST_PTHREAD_BINS)
 	rm -f install/lib/* install/bin/*
+	rm -rf tests/*.dSYM
 
 .PHONY: all clean valgrind check pthreads graphs install
