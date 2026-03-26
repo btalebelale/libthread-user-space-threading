@@ -160,3 +160,23 @@ int thread_mutex_unlock(thread_mutex_t *mutex){
     (void)mutex;
     return 0;
 }
+
+__attribute__((destructor)) static void cleanup_system(void) {
+    if (current == NULL) return;
+
+    while (!sched_empty()) {
+        thread_m *t = sched_dequeue();
+        if (t->stack != NULL) {
+            free(t->stack);
+        }
+        free(t);
+    }
+
+    if (current != NULL) {
+        if (current->stack != NULL) {
+            free(current->stack);
+        }
+        free(current);
+        current = NULL; 
+    }
+}
