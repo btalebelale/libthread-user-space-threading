@@ -1,35 +1,33 @@
 #include "thread.h"
+#include "scheduler.h"
+
 #include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h> 
-#include <sys/queue.h>
+
 
 #define STACK_SIZE 65536
 
-STAILQ_HEAD(thread_queue, thread);
 
-typedef enum {
-    READY,
-    RUNNING,
-    BLOCKED,
-    FINISHED
-} state_t;
-
-typedef struct thread {
-    ucontext_t ctx;
-    void *stack;
-
-    void *retval;
-    state_t state;
-
-    STAILQ_ENTRY(thread) link;
-    struct thread *waiting;
-} thread_m;
-
-static thread_m *current = NULL;
-static struct thread_queue ready_queue;
+static void init_system(void) {
+    sched_init();
+    
+    current = malloc(sizeof(thread_m));
+    if (!current) {
+        perror("malloc main thread");
+        exit(1);
+    }    
+    getcontext(&current->ctx); 
+    current->state = RUNNING;
+    current->stack = NULL;     
+    current->retval = NULL;
+    current->waiting = NULL;
+}
 
 thread_t thread_self(void) {
+    if (current == NULL) {
+        init_system();
+    }
     return (thread_t) current;
 }
 
@@ -39,6 +37,9 @@ void thread_start(void *(*func)(void *), void *arg) {
 }
 
 int thread_create(thread_t *newthread, void *(*func)(void *), void *arg) {
+    if (current == NULL) {
+        init_system();
+    }
     thread_m *t = malloc(sizeof(thread_m));
     if (!t) return -1;
 
@@ -63,7 +64,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg) {
 
     makecontext(&t->ctx, (void (*)())thread_start, 2, func, arg);
 
-    STAILQ_INSERT_TAIL(&ready_queue, t, link);
+    sched_enqueue(t);
 
     *newthread = (thread_t)t;
 
@@ -71,17 +72,16 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg) {
 }
 
 int thread_yield(void) {
-    if (STAILQ_EMPTY(&ready_queue)) {
+    if (sched_empty()) {
         return 0;
     }
 
     thread_m *prev = current;
 
     prev->state = READY;
-    STAILQ_INSERT_TAIL(&ready_queue, prev, link);
+    sched_enqueue(prev);
 
-    thread_m *next = STAILQ_FIRST(&ready_queue);
-    STAILQ_REMOVE_HEAD(&ready_queue, link);
+    thread_m *next = sched_dequeue();
 
     next->state = RUNNING;
     current = next;
@@ -98,10 +98,8 @@ int thread_join(thread_t thread, void **retval) {
         t->waiting = current;
         current->state = BLOCKED;
 
-        thread_m *next = STAILQ_FIRST(&ready_queue);
+        thread_m *next = sched_dequeue();
         if (!next) return -1;
-
-        STAILQ_REMOVE_HEAD(&ready_queue, link);
 
         next->state = RUNNING;
         thread_m *prev = current;
@@ -127,19 +125,17 @@ void thread_exit(void *retval) {
 
     if (current->waiting) {
         current->waiting->state = READY;
-        STAILQ_INSERT_TAIL(&ready_queue, current->waiting, link);
+        sched_enqueue(current->waiting);
     }
 
-    if (STAILQ_EMPTY(&ready_queue)) {
+    if (sched_empty()) {
         exit(0);
     }
 
-    thread_m *next = STAILQ_FIRST(&ready_queue);
-    STAILQ_REMOVE_HEAD(&ready_queue, link);
-
+    thread_m *next = sched_dequeue();
     next->state = RUNNING;
-
     current = next;
+
     setcontext(&next->ctx);
 
     exit(1);

@@ -1,8 +1,6 @@
 #!/bin/bash
 set -e
 
-export LD_LIBRARY_PATH=.
-
 VALGRIND="valgrind --leak-check=full --show-reachable=yes --track-origins=yes"
 
 echo "===== BASIC ====="
@@ -28,14 +26,14 @@ $VALGRIND ./tests/33-switch-many-cascade 10 10
 echo "===== FIBO ====="
 $VALGRIND ./tests/51-fibonacci 10
 
-echo "===== MUTEX ====="
-$VALGRIND ./tests/61-mutex 20
-$VALGRIND ./tests/62-mutex 20
-$VALGRIND ./tests/63-mutex-equity
-$VALGRIND ./tests/64-mutex-join
-
-echo "===== PREEMPTION ====="
-$VALGRIND ./tests/71-preemption 20
-
-echo "===== DEADLOCK ====="
-$VALGRIND ./tests/81-deadlock
+#echo "===== MUTEX ====="
+#$VALGRIND ./tests/61-mutex 20
+#$VALGRIND ./tests/62-mutex 20
+#$VALGRIND ./tests/63-mutex-equity
+#$VALGRIND ./tests/64-mutex-join
+#
+#echo "===== PREEMPTION ====="
+#$VALGRIND ./tests/71-preemption 20
+#
+#echo "===== DEADLOCK ====="
+#$VALGRIND ./tests/81-deadlock

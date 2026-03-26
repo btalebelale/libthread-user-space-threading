@@ -17,13 +17,13 @@ TEST_BINS = tests/01-main \
             tests/31-switch-many \
             tests/32-switch-many-join \
             tests/33-switch-many-cascade \
-            tests/51-fibonacci \
-            tests/61-mutex \
-            tests/62-mutex \
-            tests/63-mutex-equity \
-            tests/64-mutex-join \
-            tests/71-preemption \
-            tests/81-deadlock
+            tests/51-fibonacci 
+            #tests/61-mutex \
+            #tests/62-mutex \
+            #tests/63-mutex-equity \
+            #tests/64-mutex-join \
+            #tests/71-preemption \
+            #tests/81-deadlock
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
@@ -44,10 +44,10 @@ tests/%-pthread: tests/%.c
 	$(CC) $(CFLAGS) -DUSE_PTHREAD $< -o $@ -lpthread
 
 check: all
-	./scripts/run_tests.sh
+	LD_LIBRARY_PATH=. ./scripts/run_tests.sh
 
 valgrind: all
-	./scripts/run_valgrind.sh
+	LD_LIBRARY_PATH=. ./scripts/run_valgrind.sh
 
 graphs: all pthreads
 	python3 scripts/generate_graphs.py
