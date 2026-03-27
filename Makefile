@@ -1,7 +1,13 @@
 CC      = gcc
-CFLAGS  = -Wall -Wextra -Werror -g -fPIC -I./src
+CFLAGS  = -Wall -Wextra -Werror -g -fPIC -I./src -I./debug
 
-LIB_SRC = $(wildcard src/*.c)
+# Implémentation de pool à utiliser :
+#   tab_pool            (tableau, défaut)
+#   stailq_pool         (STAILQ + wrapper malloc par nœud)
+#   stailq_pool_prealloc (STAILQ + nœuds pré-alloués, zéro malloc après init)
+POOL_IMPL ?= tab_pool
+
+LIB_SRC = src/thread.c src/scheduler_FIFO.c src/$(POOL_IMPL).c
 LIB_OBJ = $(LIB_SRC:.c=.o)
 LIB_NAME = libthread.so
 
@@ -28,6 +34,9 @@ TEST_BINS = tests/01-main \
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
 all: $(LIB_NAME) $(TEST_BINS)
+
+#debug: CFLAGS += -DDLOG
+#debug: all
 
 $(LIB_NAME): $(LIB_OBJ)
 	$(CC) -shared -o $@ $^
@@ -64,4 +73,4 @@ clean:
 	rm -f install/lib/* install/bin/*
 	rm -rf tests/*.dSYM
 
-.PHONY: all clean valgrind check pthreads graphs install
+.PHONY: all debug clean valgrind check pthreads graphs install
