@@ -8,6 +8,18 @@
 
 #define STACK_SIZE 65536
 
+static char exit_stack[4096];                                                                                                                                                        
+static ucontext_t exit_ctx;
+
+
+static void clean_exit(void) {
+    VALGRIND_STACK_DEREGISTER(current->valgrind_stackid);                                                                                                                            
+    free(current->stack);                                                                                                                                                            
+    free(current);                                                                                                                                                                    
+    current = NULL;
+    sched_cleanup();                                                                                                                                                                  
+    exit(0);
+}    
 
 static void init_system(void) {
     sched_init();
@@ -134,10 +146,15 @@ void thread_exit(void *retval) {
         current->waiting->state = READY;
         sched_enqueue(current->waiting);
     }
-
+                                                                                                                                                                              
     if (sched_empty()) {
-        exit(0);
-    }
+        getcontext(&exit_ctx);
+        exit_ctx.uc_stack.ss_sp   = exit_stack;                                                                                                                                          
+        exit_ctx.uc_stack.ss_size = sizeof(exit_stack);
+        exit_ctx.uc_link          = NULL;                                                                                                                                                
+        makecontext(&exit_ctx, clean_exit, 0);
+        swapcontext(&current->ctx, &exit_ctx);                                                                                                                                            
+    }      
 
     thread_m *next = sched_dequeue();
     next->state = RUNNING;
