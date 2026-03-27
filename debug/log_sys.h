@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <stdarg.h>
+#include <unistd.h>
 
 // Les différents niveau de log. Cela va de debug nous donne le plus de détails possible sur l'exécution, utile pour le debogage. Fatal lui est appelé que pendant des exécution fatal 
 typedef enum {
