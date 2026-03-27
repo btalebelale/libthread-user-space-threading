@@ -39,6 +39,10 @@ void pool_free(pool *p){
     return;
   }
   // La pool ne possède pas les objets thread_m, on libère uniquement le tableau et la struct.
+  if(p -> data == NULL){
+    LOG_E("p -> data est NULL");
+    return;
+  }
   free(p->data);
   free(p);
 }
@@ -67,6 +71,14 @@ thread_m *pool_get_at(pool *p, int i){
   }
   if(i < 0 || i >= p->size) {
     LOG_E("Accès à l'index %d invalide (size=%d)", i, p->size);
+    return NULL;
+  }
+  if(p -> data == NULL){
+    LOG_E("p -> data est NULL");
+    return NULL;
+  }
+   if(p -> data[i] == NULL){
+     LOG_E("p -> data[%d] est NULL",i);
     return NULL;
   }
   return p->data[i];
@@ -108,6 +120,10 @@ int pool_put_at(pool *p, thread_m *th, int idx){
   if(p->size >= p->cap){
     LOG_E("Pool pleine (cap=%d)", p->cap);
     return -1;
+  }
+   if(p -> data == NULL){
+     LOG_E("p -> data est NULL");
+     return -1;
   }
   for(int i = p->size; i > idx; i--)
     p->data[i] = p->data[i - 1];
@@ -151,6 +167,10 @@ thread_m *pool_remove_at(pool *p, int idx){
   }
   thread_m *th = p->data[idx];
   p->size--;
+ if(p -> data == NULL){
+     LOG_E("p -> data est NULL");
+    return NULL;
+  }
   for(int i = idx; i < p->size; i++) //Ne pas oublier de free les thread déjà allouer !
     p->data[i] = p->data[i + 1];
   return th;
