@@ -181,7 +181,15 @@ __attribute__((destructor)) static void cleanup_system(void) {
     }
 
     if (current != NULL) {
-        free(current);
-        current = NULL; 
+        if (current->stack == NULL) {
+            /* Main thread: no custom stack, safe to free the struct */
+            free(current);
+            current = NULL;
+        }
+        /* else: we are currently executing on current->stack.
+         * Freeing it here would corrupt memory since the destructor
+         * itself runs on that stack. Leave it reachable via `current`. */
     }
+
+    sched_cleanup();
 }

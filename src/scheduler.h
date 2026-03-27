@@ -15,4 +15,7 @@ thread_m *sched_dequeue(void);
 // Checks if the ready queue is empty (returns 1 if empty, 0 otherwise)
 int sched_empty(void);
 
+// Frees the scheduler's internal structures (does not free threads)
+void sched_cleanup(void);
+
 #endif

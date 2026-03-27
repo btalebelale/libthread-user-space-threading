@@ -24,3 +24,10 @@ thread_m *sched_dequeue(void) {
 int sched_empty(void) {
     return pool_is_empty(ready_queue);
 }
+
+void sched_cleanup(void) {
+    if (ready_queue) {
+        pool_free(ready_queue);
+        ready_queue = NULL;
+    }
+}
