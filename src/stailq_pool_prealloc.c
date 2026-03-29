@@ -6,7 +6,7 @@
 #include <sys/queue.h>
 
 #include "pool.h"
-#include "../debug/log_sys.h"
+#include "log_sys.h"
 
 struct pool_node {
     thread_m *thread;
@@ -57,7 +57,7 @@ void pool_free(pool *p) {
     free(p);
 }
 
-int pool_is_empty(pool *p) {
+int is_pool_empty(pool *p) {
     if (p == NULL) {
         LOG_E("p est NULL");
         return -1;

@@ -33,7 +33,7 @@ Utilisé pour nettoyer le thread main à la fin
 */
 static void thread_system_destroy(void)
 {
-    while (!sched_empty())
+    while (!is_sched_empty())
     {
         thread_m *t = sched_dequeue();
 
@@ -141,7 +141,7 @@ int thread_yield(void)
         init_system();
     }
 
-    if (sched_empty())
+    if (is_sched_empty())
     {
         return 0;
     }
@@ -206,7 +206,7 @@ void thread_exit(void *retval)
         sched_enqueue(current->waiting);
     }
 
-    if (sched_empty())
+    if (is_sched_empty())
     {
         getcontext(&exit_ctx);
         exit_ctx.uc_stack.ss_sp = exit_stack;

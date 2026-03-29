@@ -13,7 +13,7 @@
 #include <stdlib.h>
 
 #include "pool.h"
-#include "../debug/log_sys.h"
+#include "log_sys.h"
 
 struct pool {
     thread_m **data;
@@ -53,7 +53,7 @@ void pool_free(pool *p) {
     free(p);
 }
 
-int pool_is_empty(pool *p) {
+int is_pool_empty(pool *p) {
     if (p == NULL) {
         LOG_E("p est NULL");
         return -1;
