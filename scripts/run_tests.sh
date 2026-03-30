@@ -8,9 +8,9 @@ CYAN='\033[0;36m'
 NC='\033[0m' 
 
 run_test() {
-    echo -e "${CYAN}▶ Lancement du test : $@${NC}"
+    echo -e "${CYAN}Lancement du test : $@${NC}"
     "$@"
-    echo -e "${GREEN}✔ Succès : $@${NC}\n"
+    echo -e "${GREEN}Succès : $@${NC}\n"
 }
 
 echo "===== BASIC TESTS ========="
