@@ -1,21 +1,35 @@
 import subprocess
 import time
 import matplotlib.pyplot as plt
+import os
 
-tests = [
-    "21-create-many",
-    "31-switch-many"
-]
+# créer le dossier "graphs" s'il n'existe pas
+graphs_dir = "graphs"
+os.makedirs(graphs_dir, exist_ok=True)
 
-thread_counts = [10, 50, 100, 200, 500]
+tests = []
+
+for f in os.listdir("tests"):
+    path = os.path.join("tests", f)
+
+    if os.path.isfile(path) and os.access(path, os.X_OK):
+        if not f.endswith("-pthread"):
+            if os.path.exists(os.path.join("tests", f + "-pthread")):
+                tests.append(f)
+
+tests.sort()
+
+thread_counts = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 100, 1000]
 
 for test in tests:
     my_times = []
     pthread_times = []
 
+    print(f"Test en cours : {test}")
+
     for n in thread_counts:
 
-        # Notre bibliothèque 
+        # Notre bibliothèque
         start = time.time()
         subprocess.run(
             [f"./tests/{test}", str(n)],
@@ -25,7 +39,7 @@ for test in tests:
         end = time.time()
         my_times.append(end - start)
 
-        #  pthread
+        # pthread
         start = time.time()
         subprocess.run(
             [f"./tests/{test}-pthread", str(n)],
@@ -34,7 +48,7 @@ for test in tests:
         end = time.time()
         pthread_times.append(end - start)
 
-    # --- Graphe ---
+    # Graphe
     plt.figure()
     plt.plot(thread_counts, my_times, marker='o', label='libthread')
     plt.plot(thread_counts, pthread_times, marker='s', label='pthread')
@@ -45,5 +59,6 @@ for test in tests:
     plt.legend()
     plt.grid(True)
 
-    plt.savefig(f"{test}.png")
+    # sauvegarde dans le dossier "graphs"
+    plt.savefig(os.path.join(graphs_dir, f"{test}.png"))
     plt.show()
