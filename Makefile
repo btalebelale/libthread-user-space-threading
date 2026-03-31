@@ -5,7 +5,7 @@ CFLAGS  = -Wall -Wextra -Werror -g -fPIC -I./src -I./debug
 #   tab_pool            (tableau, défaut)
 #   stailq_pool         (STAILQ + wrapper malloc par nœud)
 #   stailq_pool_prealloc (STAILQ + nœuds pré-alloués, zéro malloc après init)
-POOL_IMPL ?= ring_pool
+POOL_IMPL ?= stailq_pool
 
 LIB_SRC = src/thread.c src/scheduler.c src/$(POOL_IMPL).c
 LIB_OBJ = $(LIB_SRC:.c=.o)
