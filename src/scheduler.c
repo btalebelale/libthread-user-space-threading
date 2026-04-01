@@ -3,7 +3,7 @@
 
 #include <stdlib.h>
 
-#define SCHED_MAX_THREADS 1024
+#define SCHED_MAX_THREADS 100000
 
 static pool *ready_queue = NULL;
 
