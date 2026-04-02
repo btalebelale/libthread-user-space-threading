@@ -1,14 +1,15 @@
 CC      = gcc
-CFLAGS  = -Wall -Wextra -Werror -g -fPIC -I./src -I./debug
+CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug
 
 # Implémentation de pool à utiliser :
 #   tab_pool            (tableau, défaut)
 #   stailq_pool         (STAILQ + wrapper malloc par nœud)
 #   stailq_pool_prealloc (STAILQ + nœuds pré-alloués, zéro malloc après init)
-POOL_IMPL ?= stailq_pool
+POOL_IMPL ?= ring_pool
 
-LIB_SRC = src/thread.c src/scheduler.c src/$(POOL_IMPL).c
-LIB_OBJ = $(LIB_SRC:.c=.o)
+LIB_SRC_C = src/thread.c src/scheduler.c
+LIB_SRC_S = src/context_switch.S
+LIB_OBJ   = $(LIB_SRC_C:.c=.o) $(LIB_SRC_S:.S=.o)
 LIB_NAME = libthread.so
 
 TEST_BINS = tests/01-main \
@@ -23,7 +24,8 @@ TEST_BINS = tests/01-main \
             tests/31-switch-many \
             tests/32-switch-many-join \
             tests/33-switch-many-cascade \
-            tests/51-fibonacci 
+            tests/51-fibonacci \
+            tests/bench-ops
             #tests/61-mutex \
             #tests/62-mutex \
             #tests/63-mutex-equity \
@@ -39,10 +41,13 @@ all: $(LIB_NAME) $(TEST_BINS)
 #debug: all
 
 $(LIB_NAME): $(LIB_OBJ)
-	$(CC) -shared -o $@ $^
+	$(CC) -flto -Ofast -shared -o $@ $^
 
 src/%.o: src/%.c src/thread.h
 	$(CC) $(CFLAGS) -c $< -o $@
+
+src/%.o: src/%.S
+	$(CC) -g -fPIC -c $< -o $@
 
 tests/%: tests/%.c $(LIB_NAME)
 	$(CC) $(CFLAGS) $< -o $@ -L. -lthread
