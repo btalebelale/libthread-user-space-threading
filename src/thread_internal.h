@@ -14,7 +14,7 @@ typedef enum
     FINISHED
 } state_t;
 
-// HOT : touché à chaque yield/switch — 16 bytes, 4 par cache line
+// HOT : touché à chaque yield — 16 bytes, 4 par cache line
 // PAS d'aligned(64) par struct : on aligne le TABLEAU pour que
 // 4 thread_hot tiennent dans 1 cache line (64 / 16 = 4)
 typedef struct thread_hot

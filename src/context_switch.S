@@ -1,6 +1,6 @@
 // Context switch minimal pour x86-64 (System V ABI)
 // Sauvegarde uniquement les registres callee-saved : rbx, rbp, r12-r15, rsp
-// Pas de sauvegarde signal mask (pas de syscall) → ~10-20x plus rapide que swapcontext
+// Pas de sauvegarde signal mask (pas de syscall)
 
 .text
 .hidden thread_entry

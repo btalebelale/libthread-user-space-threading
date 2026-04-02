@@ -15,13 +15,12 @@
 // Demand-paging : seules les pages touchées consomment de la RAM physique.
 #define ARENA_CAP   16384
 
-// ===========================================================================
 // Sous-système mémoire : arène de stacks + slabs hot/cold
 // Deux slabs parallèles indexés de la même façon :
 //   hot_slab[i]  = données accédées à chaque yield (rsp, state)
 //   cold_slab[i] = données accédées rarement (retval, stack_base, waiting, ...)
 // Macro THREAD_COLD(hot_ptr) : O(1) pointer arithmetic pour passer de hot à cold.
-// ===========================================================================
+
 
 // Arène de stacks : région mmap'd contiguë découpée en blocs de STACK_SIZE
 static void *stack_arena;
@@ -129,9 +128,7 @@ static void thread_release(thread_hot_t *t)
     thread_free_head = t;
 }
 
-// ===========================================================================
 // Stack dédié pour clean_exit
-// ===========================================================================
 static char exit_stack[4096] __attribute__((aligned(16)));
 // Frame pré-calculé pour clean_exit (évite de recalculer à chaque thread_exit)
 static void *exit_rsp;
@@ -167,9 +164,7 @@ static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
     return s;
 }
 
-// ===========================================================================
 // Cycle de vie du système de threads
-// ===========================================================================
 
 __attribute__((cold))
 static void clean_exit(void)
@@ -233,9 +228,8 @@ static void init_system(void)
     exit_rsp = s;
 }
 
-// ===========================================================================
 // API publique
-// ===========================================================================
+
 
 __attribute__((visibility("default")))
 thread_t thread_self(void)
@@ -359,9 +353,9 @@ void thread_exit(void *retval)
     context_restore(next->rsp);
 }
 
-// ===========================================================================
+
 // Mutex (stubs)
-// ===========================================================================
+
 
 __attribute__((visibility("default")))
 int thread_mutex_init(thread_mutex_t *mutex)    { (void)mutex; return 0; }
