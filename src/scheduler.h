@@ -2,26 +2,20 @@
 #define __SCHEDULER_H__
 
 #include "thread_internal.h"
-#include "ring_pool.h"
 
-extern pool *ready_queue;
-extern thread_hot_t *current;
-
-// Hot path : static inline pour garantir l'inlining dans thread_yield/thread_exit
-static inline void sched_enqueue(thread_hot_t *t) {
-    pool_put_last(ready_queue, t);
-}
-
-static inline thread_hot_t *sched_dequeue(void) {
-    return pool_remove_first(ready_queue);
-}
-
-static inline int is_sched_empty(void) {
-    return is_pool_empty(ready_queue);
-}
-
-// Cold path : init et cleanup
+// Initializes the thread ready queue
 void sched_init(void);
+
+// Adds a thread to the tail of the ready queue 
+void sched_enqueue(thread_m *t);
+
+// Removes and returns the first thread from the ready queue
+thread_m *sched_dequeue(void);
+
+// Checks if the ready queue is empty (returns 1 if empty, 0 otherwise)
+int is_sched_empty(void);
+
+// Frees the scheduler's internal structures (does not free threads)
 void sched_cleanup(void);
 
 #endif

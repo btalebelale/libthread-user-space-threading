@@ -1,13 +1,32 @@
 #include "scheduler.h"
+#include "pool.h"
 
-#define SCHED_MAX_THREADS 16384
+#include <stdlib.h>
 
-pool *ready_queue = NULL;
-thread_hot_t *current = NULL;
+#define SCHED_MAX_THREADS 100000
 
-void sched_init(void)
+static pool *ready_queue = NULL;
+
+thread_m *current = NULL;
+
+void sched_init()
 {
     ready_queue = pool_init(SCHED_MAX_THREADS);
+}
+
+void sched_enqueue(thread_m *t)
+{
+    pool_put_last(ready_queue, t);
+}
+
+thread_m *sched_dequeue(void)
+{
+    return pool_remove_first(ready_queue);
+}
+
+int is_sched_empty(void)
+{
+    return is_pool_empty(ready_queue);
 }
 
 void sched_cleanup(void)
