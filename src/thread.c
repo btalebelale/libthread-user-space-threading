@@ -6,10 +6,10 @@
 #include <stdio.h>
 #include <valgrind/valgrind.h>
 
-#define STACK_SIZE 4096
+#define STACK_SIZE (64 * 1024)
 
-static char exit_stack[4096];
-static ucontext_t exit_ctx;
+static char exit_stack[STACK_SIZE];
+
 
 /*
 Appelée quand le dernier thread (qui n'est pas le main) se termine.
@@ -19,7 +19,7 @@ Utilisé pour fixer la fuite mémoire du tests/12-join-main.c
 static void clean_exit(void)
 {
     VALGRIND_STACK_DEREGISTER(current->valgrind_stackid);
-    free(current->ctx.uc_stack.ss_sp);
+    free(current->stack);
     free(current);
     current = NULL;
     sched_cleanup();
@@ -37,10 +37,10 @@ static void thread_system_destroy(void)
     {
         thread_m *t = sched_dequeue();
 
-        if (t->ctx.uc_stack.ss_sp != NULL)
+        if (t->stack != NULL)
         {
             VALGRIND_STACK_DEREGISTER(t->valgrind_stackid);
-            free(t->ctx.uc_stack.ss_sp);
+            free(t->stack);
         }
 
         free(t);
@@ -71,9 +71,11 @@ static void init_system(void)
         perror("malloc main thread");
         exit(1);
     }
-    getcontext(&current->ctx);
+    //getcontext(&current->ctx);
+    setjmp(current->env);
     current->state = RUNNING;
-    current->ctx.uc_stack.ss_sp = NULL;
+    current->stack_size = 0;
+    current->stack = NULL;
     current->retval = NULL;
     current->waiting = NULL;
 }
@@ -104,28 +106,41 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
         init_system();
     }
     thread_m *t = malloc(sizeof(thread_m));
-    if (!t)
-        return -1;
-
-    if (getcontext(&t->ctx) == -1)
-    {
-        free(t);
+    if (!t){
         return -1;
     }
 
-    t->ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
-    t->ctx.uc_stack.ss_size = STACK_SIZE;
-    t->ctx.uc_link = NULL;
-
+    t->stack_size = STACK_SIZE;
+    t->stack = calloc(1, t->stack_size);
+    if(!t->stack) {
+        return -1;
+    }
+       
     t->state = READY;
     t->retval = NULL;
     t->waiting = NULL;
-
-    makecontext(&t->ctx, (void (*)())thread_start, 2, func, arg);
+    t->func = func;
+    t->func_arg = arg;
 
     t->valgrind_stackid = VALGRIND_STACK_REGISTER(
-        t->ctx.uc_stack.ss_sp,
-        t->ctx.uc_stack.ss_sp + t->ctx.uc_stack.ss_size);
+        t->stack,
+        t->stack + t->stack_size);
+    
+
+    void *old_rsp = NULL;                      
+    void *top = t->stack + t->stack_size;   
+                                                                                                                                      
+    asm("mov %%rsp, %0" : "=r"(old_rsp));   // sauvegarder rsp
+    asm("mov %0, %%rsp" : : "r"(top));       // rsp -> nouvelle pile                                                                   
+                                            
+    if (setjmp(t->env) == 0) {               // setjmp avec le bon rsp                                                                
+        asm("mov %0, %%rsp" : : "r"(old_rsp)); // restaurer rsp
+    } else {                                                                                                                          
+        // on arrive ici quand on fait longjmp(t->env)                                                                                
+        // c'est ici que le thread démarre                                                                                            
+        thread_start(current->func, current->func_arg);              // rip = cette fonction                                                                 
+    }  
+
 
     sched_enqueue(t);
 
@@ -156,7 +171,11 @@ int thread_yield(void)
     next->state = RUNNING;
     current = next;
 
-    swapcontext(&prev->ctx, &next->ctx);
+    //swapcontext(&prev->ctx, &next->ctx);
+
+    if(setjmp(prev->env) == 0){
+        longjmp(next->env, 1);
+    }
 
     return 0;
 }
@@ -178,7 +197,10 @@ int thread_join(thread_t thread, void **retval)
         thread_m *prev = current;
         current = next;
 
-        swapcontext(&prev->ctx, &next->ctx);
+        //swapcontext(&prev->ctx, &next->ctx);
+        if(setjmp(prev->env) == 0){
+            longjmp(next->env, 1);
+        }
     }
 
     if (retval)
@@ -188,7 +210,7 @@ int thread_join(thread_t thread, void **retval)
 
     VALGRIND_STACK_DEREGISTER(t->valgrind_stackid);
 
-    free(t->ctx.uc_stack.ss_sp);
+    free(t->stack);
     free(t);
 
     return 0;
@@ -206,21 +228,26 @@ void thread_exit(void *retval)
         sched_enqueue(current->waiting);
     }
 
+
     if (is_sched_empty())
     {
-        getcontext(&exit_ctx);
+        /*getcontext(&exit_ctx);
         exit_ctx.uc_stack.ss_sp = exit_stack;
         exit_ctx.uc_stack.ss_size = sizeof(exit_stack);
         exit_ctx.uc_link = NULL;
         makecontext(&exit_ctx, clean_exit, 0);
-        swapcontext(&current->ctx, &exit_ctx);
+        swapcontext(&current->ctx, &exit_ctx);*/
+        void *top = exit_stack + sizeof(exit_stack);
+        asm("mov %0, %%rsp" : : "r"(top));  // changer vers la pile statique
+        clean_exit();                         // maintenant on peut free l'ancienne pile
     }
 
     thread_m *next = sched_dequeue();
     next->state = RUNNING;
     current = next;
 
-    setcontext(&next->ctx);
+    //setcontext(&next->ctx);
+    longjmp(next->env, 1);
 
     exit(1);
 }
