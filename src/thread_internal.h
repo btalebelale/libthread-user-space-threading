@@ -3,7 +3,6 @@
 
 #include "thread.h"
 #include <stdlib.h>
-#include <ucontext.h>
 #include <setjmp.h>
 
 // Thread states

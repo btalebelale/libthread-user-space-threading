@@ -1,7 +1,6 @@
 #include "thread.h"
 #include "scheduler.h"
 
-#include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <valgrind/valgrind.h>
