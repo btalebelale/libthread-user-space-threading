@@ -70,7 +70,6 @@ static void init_system(void)
         perror("malloc main thread");
         exit(1);
     }
-    //getcontext(&current->ctx);
     setjmp(current->env);
     current->state = RUNNING;
     current->stack_size = 0;
@@ -235,7 +234,6 @@ void thread_exit(void *retval)
     next->state = RUNNING;
     current = next;
 
-    //setcontext(&next->ctx);
     longjmp(next->env, 1);
 
     exit(1);
