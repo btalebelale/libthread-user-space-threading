@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <valgrind/valgrind.h>
 
-#define STACK_SIZE (64 * 1024)
+#define STACK_SIZE (16 * 1024)
 
 static char exit_stack[STACK_SIZE];
 
