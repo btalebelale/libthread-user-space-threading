@@ -130,15 +130,13 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     void *old_rsp = NULL;                      
     void *top = t->stack + t->stack_size;   
                                                                                                                                       
-    asm("mov %%rsp, %0" : "=r"(old_rsp));   // sauvegarder rsp
-    asm("mov %0, %%rsp" : : "r"(top));       // rsp -> nouvelle pile                                                                   
+    asm("mov %%rsp, %0" : "=r"(old_rsp));   
+    asm("mov %0, %%rsp" : : "r"(top));                                                                        
                                             
-    if (setjmp(t->env) == 0) {               // setjmp avec le bon rsp                                                                
-        asm("mov %0, %%rsp" : : "r"(old_rsp)); // restaurer rsp
-    } else {                                                                                                                          
-        // on arrive ici quand on fait longjmp(t->env)                                                                                
-        // c'est ici que le thread démarre                                                                                            
-        thread_start(current->func, current->func_arg);              // rip = cette fonction                                                                 
+    if (setjmp(t->env) == 0) {                                                                              
+        asm("mov %0, %%rsp" : : "r"(old_rsp)); 
+    } else {                                                                                                                                                                                                                    
+        thread_start(current->func, current->func_arg);                                                                       
     }  
 
 
@@ -171,8 +169,6 @@ int thread_yield(void)
     next->state = RUNNING;
     current = next;
 
-    //swapcontext(&prev->ctx, &next->ctx);
-
     if(setjmp(prev->env) == 0){
         longjmp(next->env, 1);
     }
@@ -197,7 +193,6 @@ int thread_join(thread_t thread, void **retval)
         thread_m *prev = current;
         current = next;
 
-        //swapcontext(&prev->ctx, &next->ctx);
         if(setjmp(prev->env) == 0){
             longjmp(next->env, 1);
         }
@@ -231,15 +226,10 @@ void thread_exit(void *retval)
 
     if (is_sched_empty())
     {
-        /*getcontext(&exit_ctx);
-        exit_ctx.uc_stack.ss_sp = exit_stack;
-        exit_ctx.uc_stack.ss_size = sizeof(exit_stack);
-        exit_ctx.uc_link = NULL;
-        makecontext(&exit_ctx, clean_exit, 0);
-        swapcontext(&current->ctx, &exit_ctx);*/
+
         void *top = exit_stack + sizeof(exit_stack);
-        asm("mov %0, %%rsp" : : "r"(top));  // changer vers la pile statique
-        clean_exit();                         // maintenant on peut free l'ancienne pile
+        asm("mov %0, %%rsp" : : "r"(top));  
+        clean_exit();                    
     }
 
     thread_m *next = sched_dequeue();
