@@ -109,7 +109,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     }
 
     t->stack_size = STACK_SIZE;
-    t->stack = calloc(1, t->stack_size);
+    t->stack = malloc(t->stack_size);
     if(!t->stack) {
         return -1;
     }
