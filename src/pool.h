@@ -17,7 +17,8 @@ pool *pool_init(int cap);
 // Ne libère pas les threads.
 void pool_free(pool *p);
 
-// Vérifie si la pool est vide. Renvoie O si ce n'est pas le cas. Une autre valeur sinon. -1 si erreur.
+// Vérifie si la pool est vide. Renvoie O si ce n'est pas le cas. Une autre
+// valeur sinon. -1 si erreur.
 int is_pool_empty(pool *p);
 
 // Revoie la taille de la pool. -1 si erreur.
@@ -33,8 +34,8 @@ thread_m *pool_get_first(pool *p);
 thread_m *pool_get_last(pool *p);
 
 // Met le thread th à la ième position. Renvoie -1 si echec 0 sinon.
-// On suppose que si il y 'avait un élément à la position i il est décalé vers la
-// droite.
+// On suppose que si il y 'avait un élément à la position i il est décalé vers
+// la droite.
 int pool_put_at(pool *p, thread_m *th, int i);
 
 // Met le thread à la première position.  Renvoie -1 si echec 0 sinon.

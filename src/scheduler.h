@@ -6,7 +6,7 @@
 // Initializes the thread ready queue
 void sched_init(void);
 
-// Adds a thread to the tail of the ready queue 
+// Adds a thread to the tail of the ready queue
 void sched_enqueue(thread_m *t);
 
 // Removes and returns the first thread from the ready queue
