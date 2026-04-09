@@ -3,7 +3,6 @@ import time
 import matplotlib.pyplot as plt
 import os
 
-# créer le dossier "graphs" s'il n'existe pas
 graphs_dir = "graphs"
 os.makedirs(graphs_dir, exist_ok=True)
 
@@ -19,46 +18,51 @@ for f in os.listdir("tests"):
 
 tests.sort()
 
-thread_counts = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 100, 1000]
+test_args = {
+      "21-create-many": [1, 5, 10, 50, 100, 500, 1000],
+      "22-create-many-recursive": [1, 5, 10, 50, 100, 200],
+      "23-create-many-once": [1, 5, 10, 50, 100, 500, 1000],
+      "31-switch-many": [1, 5, 10, 20, 50],
+      "32-switch-many-join": [1, 5, 10, 20, 50],
+      "33-switch-many-cascade": [1, 5, 10, 20],
+      "51-fibonacci": [5, 10, 15, 20, 25],
+  }
 
 for test in tests:
+    counts = test_args.get(test)
+    if not counts:
+        continue
     my_times = []
     pthread_times = []
-
-    print(f"Test en cours : {test}")
-
-    for n in thread_counts:
-
-        # Notre bibliothèque
+    for n in counts:
+        if test.startswith("31-") or test.startswith("32-"):
+            args = [str(n), "20"]
+        elif test.startswith("33-"):
+            args = [str(n), "10"]
+        else:
+            args = [str(n)]
         start = time.time()
         subprocess.run(
-            [f"./tests/{test}", str(n)],
+            [f"./tests/{test}"] + args,
             env={"LD_LIBRARY_PATH": "."},
             stdout=subprocess.DEVNULL
         )
         end = time.time()
         my_times.append(end - start)
-
-        # pthread
         start = time.time()
         subprocess.run(
-            [f"./tests/{test}-pthread", str(n)],
+            [f"./tests/{test}-pthread"] + args,
             stdout=subprocess.DEVNULL
         )
         end = time.time()
         pthread_times.append(end - start)
-
-    # Graphe
     plt.figure()
-    plt.plot(thread_counts, my_times, marker='o', label='libthread')
-    plt.plot(thread_counts, pthread_times, marker='s', label='pthread')
-
-    plt.xlabel("Nombre de threads")
+    plt.plot(counts, my_times, marker='o', label='libthread')
+    plt.plot(counts, pthread_times, marker='s', label='pthread')
+    plt.xlabel("Argument")
     plt.ylabel("Temps (s)")
     plt.title(f"Performance {test}")
     plt.legend()
     plt.grid(True)
-
-    # sauvegarde dans le dossier "graphs"
     plt.savefig(os.path.join(graphs_dir, f"{test}.png"))
     plt.show()

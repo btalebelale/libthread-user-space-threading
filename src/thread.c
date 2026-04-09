@@ -66,7 +66,7 @@ static void init_system(void)
         perror("malloc main thread");
         exit(1);
     }
-    setjmp(current->env);
+    _setjmp(current->env);
     current->state = RUNNING;
     current->stack_size = 0;
     current->stack = NULL;
@@ -88,7 +88,7 @@ thread_t thread_self(void)
 {
     if (current == NULL)
     {
-        init_system();
+      init_system();
     }
     return (thread_t)current;
 }
@@ -97,7 +97,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
 {
     if (current == NULL)
     {
-        init_system();
+      init_system();
     }
     thread_m *t = malloc(sizeof(thread_m));
     if (!t)
@@ -126,7 +126,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     asm("mov %%rsp, %0" : "=r"(old_rsp));
     asm("mov %0, %%rsp" : : "r"(top));
 
-    if (setjmp(t->env) == 0)
+    if (_setjmp(t->env) == 0)
     {
         asm("mov %0, %%rsp" : : "r"(old_rsp));
     }
@@ -164,9 +164,9 @@ int thread_yield(void)
     next->state = RUNNING;
     current = next;
 
-    if (setjmp(prev->env) == 0)
+    if (_setjmp(prev->env) == 0)
     {
-        longjmp(next->env, 1);
+      _longjmp(next->env, 1);
     }
 
     return 0;
@@ -189,9 +189,9 @@ int thread_join(thread_t thread, void **retval)
         thread_m *prev = current;
         current = next;
 
-        if (setjmp(prev->env) == 0)
+        if (_setjmp(prev->env) == 0)
         {
-            longjmp(next->env, 1);
+          _longjmp(next->env, 1);
         }
     }
 
@@ -232,15 +232,17 @@ void thread_exit(void *retval)
     next->state = RUNNING;
     current = next;
 
-    longjmp(next->env, 1);
+    _longjmp(next->env, 1);
 
     exit(1);
 }
 
 int thread_mutex_init(thread_mutex_t *mutex)
 {
-    (void)mutex;
-    return 0;
+  thread_mutex_m *m = (thread_mutex_m *)mutex;
+  m->locked = 0;
+  STAILQ_INIT(&m->waiting);
+  return 0;
 }
 
 int thread_mutex_destroy(thread_mutex_t *mutex)
@@ -251,12 +253,36 @@ int thread_mutex_destroy(thread_mutex_t *mutex)
 
 int thread_mutex_lock(thread_mutex_t *mutex)
 {
-    (void)mutex;
+    thread_mutex_m *m = (thread_mutex_m *)mutex;
+    if(!m->locked){
+      m->locked = 1;
+      return 0;
+    }
+
+    // bloqué : on se met dans la file et on switch 
+    current->state = BLOCKED;
+    STAILQ_INSERT_TAIL(&m->waiting, current, link);
+
+    thread_m *next = sched_dequeue();
+    thread_m *prev = current;
+    next->state = RUNNING;
+    current = next;
+    if (_setjmp(prev->env) == 0) {
+        _longjmp(next->env, 1);
+    }
     return 0;
 }
 
 int thread_mutex_unlock(thread_mutex_t *mutex)
 {
-    (void)mutex;
-    return 0;
+  thread_mutex_m *m = (thread_mutex_m *)mutex;
+  if(STAILQ_EMPTY(&m->waiting)){
+   m->locked = 0;
+   return 0;
+  }
+  thread_m *t = STAILQ_FIRST(&m->waiting);
+  STAILQ_REMOVE_HEAD(&m->waiting, link);
+  t->state = RUNNING;
+  sched_enqueue(t);
+  return 0;
 }

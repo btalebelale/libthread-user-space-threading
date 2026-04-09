@@ -26,14 +26,7 @@ int is_sched_empty(void)
 
 thread_m *sched_dequeue(void)
 {
-    if (is_sched_empty())
-    {
-        return NULL;
-    }
-    else
-    {
-        thread_m *first = STAILQ_FIRST(&ready_queue);
-        STAILQ_REMOVE_HEAD(&ready_queue, link);
-        return first;
-    }
+    thread_m *first = STAILQ_FIRST(&ready_queue);
+    STAILQ_REMOVE_HEAD(&ready_queue, link);
+    return first;
 }
