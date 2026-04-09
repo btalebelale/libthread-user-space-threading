@@ -1,39 +1,41 @@
 #include "scheduler.h"
-#include "pool.h"
+#include "thread_internal.h"
 
 #include <stdlib.h>
 
-#define SCHED_MAX_THREADS 100000
+STAILQ_HEAD(thread_queue, thread);
 
-static pool *ready_queue = NULL;
+static struct thread_queue ready_queue;
 
 thread_m *current = NULL;
 
 void sched_init()
 {
-    ready_queue = pool_init(SCHED_MAX_THREADS);
+    STAILQ_INIT(&ready_queue);
 }
 
 void sched_enqueue(thread_m *t)
 {
-    pool_put_last(ready_queue, t);
-}
-
-thread_m *sched_dequeue(void)
-{
-    return pool_remove_first(ready_queue);
+    STAILQ_INSERT_TAIL(&ready_queue, t, link);
 }
 
 int is_sched_empty(void)
 {
-    return is_pool_empty(ready_queue);
+    return STAILQ_EMPTY(&ready_queue);
 }
 
-void sched_cleanup(void)
+thread_m *sched_dequeue(void)
 {
-    if (ready_queue)
-    {
-        pool_free(ready_queue);
-        ready_queue = NULL;
+    if(is_sched_empty()){
+        return NULL;
+    } 
+    else {
+        thread_m *first = STAILQ_FIRST(&ready_queue);
+        STAILQ_REMOVE_HEAD(&ready_queue, link);
+        return first;
     }
 }
+
+
+
+

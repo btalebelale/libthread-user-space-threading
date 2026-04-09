@@ -21,7 +21,6 @@ static void clean_exit(void)
     free(current->stack);
     free(current);
     current = NULL;
-    sched_cleanup();
     exit(0);
 }
 
@@ -49,8 +48,6 @@ static void thread_system_destroy(void)
         free(current);
         current = NULL;
     }
-
-    sched_cleanup();
 }
 
 /*
