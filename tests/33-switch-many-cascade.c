@@ -1,13 +1,14 @@
-#include <stdio.h>
+#include "thread.h"
 #include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
-#include <stdint.h>
-#include "thread.h"
 
 /* test une chaine de thread avec un nombre decroissants de switch quand on descend dans la chaine.
  *
- * La durée du programme doit etre proportionnelle au nombre de total de yields = ( nbyield * nbthread * (nbthread+1) / 2 ) donnés en argument
+ * La durée du programme doit etre proportionnelle au nombre de total de yields = ( nbyield *
+ * nbthread * (nbthread+1) / 2 ) donnés en argument
  *
  * support nécessaire:
  * - thread_create()
@@ -19,28 +20,32 @@
 static int nbyield;
 static int nbthread;
 
-static void * thfunc(void *_nbth)
+static void *thfunc(void *_nbth)
 {
-    int nbth = (intptr_t) _nbth;
+    int nbth = (intptr_t)_nbth;
     int i;
 
-    if ((unsigned long) nbth > 0) {
+    if ((unsigned long)nbth > 0)
+    {
         thread_t th;
         int err;
         void *res;
-        err = thread_create(&th, thfunc, ((char*)_nbth)-1);
+        err = thread_create(&th, thfunc, ((char *)_nbth) - 1);
         assert(!err);
 
-        for(i=0; i<(nbyield*nbth); i++) {
+        for (i = 0; i < (nbyield * nbth); i++)
+        {
             thread_yield();
         }
 
         err = thread_join(th, &res);
         assert(!err);
-        assert(res == ((char*)_nbth)-1);
+        assert(res == ((char *)_nbth) - 1);
     }
-    else {
-        for(i=0; i<(nbyield*nbthread); i++) {
+    else
+    {
+        for (i = 0; i < (nbyield * nbthread); i++)
+        {
             thread_yield();
         }
     }
@@ -53,7 +58,8 @@ int main(int argc, char *argv[])
     unsigned long us;
     unsigned long nbth;
 
-    if (argc < 3) {
+    if (argc < 3)
+    {
         printf("arguments manquants: nombre de threads, puis nombre de yield\n");
         return EXIT_FAILURE;
     }
@@ -63,10 +69,10 @@ int main(int argc, char *argv[])
     nbyield = atoi(argv[2]);
 
     gettimeofday(&tv1, NULL);
-    thfunc((void*) nbth);
+    thfunc((void *)nbth);
     gettimeofday(&tv2, NULL);
 
-    us = (tv2.tv_sec-tv1.tv_sec)*1000000+(tv2.tv_usec-tv1.tv_usec);
+    us = (tv2.tv_sec - tv1.tv_sec) * 1000000 + (tv2.tv_usec - tv1.tv_usec);
     printf("%d yield avec plein de threads dans join: %ld us\n", nbyield, us);
 
     printf("%ld threads créés et détruits\n", nbth);

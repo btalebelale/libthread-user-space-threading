@@ -1,6 +1,6 @@
-#include <stdio.h>
-#include <assert.h>
 #include "thread.h"
+#include <assert.h>
+#include <stdio.h>
 
 /* test du thread_self et yield du main seul.
  *
@@ -14,15 +14,16 @@
 
 int main()
 {
-  int err, i;
+    int err, i;
 
-  for(i=0; i<10; i++) {
-    printf("le main yield tout seul\n");
-    err = thread_yield();
-    assert(!err);
-  }
+    for (i = 0; i < 10; i++)
+    {
+        printf("le main yield tout seul\n");
+        err = thread_yield();
+        assert(!err);
+    }
 
-  printf("le main est %p\n", (void*) thread_self());
+    printf("le main est %p\n", (void *)thread_self());
 
-  return 0;
+    return 0;
 }

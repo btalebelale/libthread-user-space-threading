@@ -1,19 +1,19 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include "thread.h"
 #include <assert.h>
 #include <errno.h>
-#include "thread.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 /* test de detection d'un deadlock lors d'un cycle de thread qui joignent tous le suivant.
  * main(th0) joine th1 qui joine th2 qui joine main.
- * il faut qu'un join renvoie EDEADLK quand il detecte le deadlock, et les autres renvoient 0 normalement.
+ * il faut qu'un join renvoie EDEADLK quand il detecte le deadlock, et les autres renvoient 0
+ * normalement.
  */
-
 
 static thread_t th0, th1, th2;
 int totalerr = 0;
 
-static void * thfunc2(void *dummy __attribute__((unused)))
+static void *thfunc2(void *dummy __attribute__((unused)))
 {
     void *res;
     int err = thread_join(th0, &res);
@@ -22,7 +22,7 @@ static void * thfunc2(void *dummy __attribute__((unused)))
     thread_exit(NULL);
 }
 
-static void * thfunc1(void *dummy __attribute__((unused)))
+static void *thfunc1(void *dummy __attribute__((unused)))
 {
     void *res;
     int err = thread_create(&th2, thfunc2, NULL);
@@ -48,10 +48,12 @@ int main()
     printf("somme des valeurs de retour = %d\n", totalerr);
     assert(totalerr == EDEADLK);
 
-    if ( totalerr == EDEADLK ) {
-	return EXIT_SUCCESS;
+    if (totalerr == EDEADLK)
+    {
+        return EXIT_SUCCESS;
     }
-    else {
-	return EXIT_FAILURE;
+    else
+    {
+        return EXIT_FAILURE;
     }
 }

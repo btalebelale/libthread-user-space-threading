@@ -1,8 +1,8 @@
+#include "thread.h"
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <assert.h>
 #include <sys/time.h>
-#include "thread.h"
 
 /*
  * Benchmark des coûts unitaires de chaque opération :
@@ -12,10 +12,10 @@
  *   4. scalabilité  : yield throughput en fonction du nombre de threads
  */
 
-#define N_CREATE    10000
-#define N_YIELD     10000
-#define N_YIELD_TH  50
-#define N_JOIN      10000
+#define N_CREATE 10000
+#define N_YIELD 10000
+#define N_YIELD_TH 50
+#define N_JOIN 10000
 
 static long elapsed_us(struct timeval *t1, struct timeval *t2)
 {
@@ -37,7 +37,8 @@ static void bench_create_join(void)
     int err;
 
     gettimeofday(&t1, NULL);
-    for (int i = 0; i < N_CREATE; i++) {
+    for (int i = 0; i < N_CREATE; i++)
+    {
         err = thread_create(&th, noop_func, NULL);
         assert(!err);
         err = thread_join(th, NULL);
@@ -46,13 +47,14 @@ static void bench_create_join(void)
     gettimeofday(&t2, NULL);
 
     long us = elapsed_us(&t1, &t2);
-    printf("  create+join  : %6.2f us/op  (%d ops, %ld us total)\n",
-           (double)us / N_CREATE, N_CREATE, us);
+    printf("  create+join  : %6.2f us/op  (%d ops, %ld us total)\n", (double)us / N_CREATE,
+           N_CREATE, us);
 }
 
 /* ── 2. yield throughput ───────────────────────────────── */
 
-struct yield_arg {
+struct yield_arg
+{
     int n_yields;
 };
 
@@ -70,11 +72,12 @@ static void bench_yield(int n_threads, int n_yields)
     thread_t *threads = malloc(sizeof(thread_t) * n_threads);
     assert(threads);
 
-    struct yield_arg ya = { .n_yields = n_yields };
+    struct yield_arg ya = {.n_yields = n_yields};
 
     gettimeofday(&t1, NULL);
 
-    for (int i = 0; i < n_threads; i++) {
+    for (int i = 0; i < n_threads; i++)
+    {
         int err = thread_create(&threads[i], yield_func, &ya);
         assert(!err);
     }
@@ -83,7 +86,8 @@ static void bench_yield(int n_threads, int n_yields)
     for (int i = 0; i < n_yields; i++)
         thread_yield();
 
-    for (int i = 0; i < n_threads; i++) {
+    for (int i = 0; i < n_threads; i++)
+    {
         int err = thread_join(threads[i], NULL);
         assert(!err);
     }
@@ -107,7 +111,8 @@ static void bench_join(void)
     assert(threads);
 
     /* Créer tous les threads d'abord */
-    for (int i = 0; i < N_JOIN; i++) {
+    for (int i = 0; i < N_JOIN; i++)
+    {
         int err = thread_create(&threads[i], noop_func, NULL);
         assert(!err);
     }
@@ -118,15 +123,16 @@ static void bench_join(void)
 
     /* Mesurer le coût du join seul */
     gettimeofday(&t1, NULL);
-    for (int i = 0; i < N_JOIN; i++) {
+    for (int i = 0; i < N_JOIN; i++)
+    {
         int err = thread_join(threads[i], NULL);
         assert(!err);
     }
     gettimeofday(&t2, NULL);
 
     long us = elapsed_us(&t1, &t2);
-    printf("  join         : %6.2f us/op  (%d ops, %ld us total)\n",
-           (double)us / N_JOIN, N_JOIN, us);
+    printf("  join         : %6.2f us/op  (%d ops, %ld us total)\n", (double)us / N_JOIN, N_JOIN,
+           us);
 
     free(threads);
 }
@@ -141,19 +147,22 @@ static void bench_yield_scalability(void)
 
     printf("\n=== Scalabilité yield (%d yields/thread) ===\n", yields_per_thread);
 
-    for (int c = 0; c < n_counts; c++) {
+    for (int c = 0; c < n_counts; c++)
+    {
         int nth = thread_counts[c];
-        if (nth > 1000) break; /* ne pas dépasser SCHED_MAX_THREADS */
+        if (nth > 1000)
+            break; /* ne pas dépasser SCHED_MAX_THREADS */
 
         struct timeval t1, t2;
         thread_t *threads = malloc(sizeof(thread_t) * nth);
         assert(threads);
 
-        struct yield_arg ya = { .n_yields = yields_per_thread };
+        struct yield_arg ya = {.n_yields = yields_per_thread};
 
         gettimeofday(&t1, NULL);
 
-        for (int i = 0; i < nth; i++) {
+        for (int i = 0; i < nth; i++)
+        {
             int err = thread_create(&threads[i], yield_func, &ya);
             assert(!err);
         }
@@ -161,7 +170,8 @@ static void bench_yield_scalability(void)
         for (int i = 0; i < yields_per_thread; i++)
             thread_yield();
 
-        for (int i = 0; i < nth; i++) {
+        for (int i = 0; i < nth; i++)
+        {
             int err = thread_join(threads[i], NULL);
             assert(!err);
         }
@@ -170,8 +180,8 @@ static void bench_yield_scalability(void)
 
         long us = elapsed_us(&t1, &t2);
         long total_yields = (long)(nth + 1) * yields_per_thread;
-        printf("  %3d threads  : %6.2f us/yield  (%ld us total)\n",
-               nth, (double)us / total_yields, us);
+        printf("  %3d threads  : %6.2f us/yield  (%ld us total)\n", nth, (double)us / total_yields,
+               us);
 
         free(threads);
     }
@@ -186,13 +196,15 @@ static void bench_create_scalability(void)
 
     printf("\n=== Scalabilité création (create+join séquentiel) ===\n");
 
-    for (int c = 0; c < n_counts; c++) {
+    for (int c = 0; c < n_counts; c++)
+    {
         int n = counts[c];
         struct timeval t1, t2;
         thread_t th;
 
         gettimeofday(&t1, NULL);
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < n; i++)
+        {
             int err = thread_create(&th, noop_func, NULL);
             assert(!err);
             err = thread_join(th, NULL);
@@ -201,8 +213,7 @@ static void bench_create_scalability(void)
         gettimeofday(&t2, NULL);
 
         long us = elapsed_us(&t1, &t2);
-        printf("  %5d threads : %6.2f us/op  (%ld us total)\n",
-               n, (double)us / n, us);
+        printf("  %5d threads : %6.2f us/op  (%ld us total)\n", n, (double)us / n, us);
     }
 }
 
