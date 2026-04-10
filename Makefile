@@ -1,11 +1,20 @@
 CC      = gcc
-CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug
+SCHED_CFLAGS_fifo = -DSCHED_FIFO
+SCHED_CFLAGS_lifo = -DSCHED_LIFO
+SCHED_CFLAGS_hybrid =
+CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL))
 
 # Implémentation de pool à utiliser :
 #   tab_pool            (tableau, défaut)
 #   stailq_pool         (STAILQ + wrapper malloc par nœud)
 #   stailq_pool_prealloc (STAILQ + nœuds pré-alloués, zéro malloc après init)
 POOL_IMPL ?= ring_pool
+
+# Politique d'ordonnancement :
+#   hybrid (défaut) : yield=FIFO (équité) + join/exit=LIFO (DFS)
+#   fifo            : tout FIFO (BFS)
+#   lifo            : tout LIFO (DFS pur)
+SCHED_IMPL ?= hybrid
 
 LIB_SRC_C = src/thread.c src/scheduler.c
 LIB_SRC_S = src/context_switch.S
