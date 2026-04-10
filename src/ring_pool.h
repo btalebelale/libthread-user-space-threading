@@ -3,11 +3,18 @@
 
 // Ring buffer FIFO inliné pour le scheduler hot path.
 // Invariant : cap est toujours une puissance de 2.
-//   → (x & mask) au lieu de (x % cap) : AND ~1 cycle vs IDIV ~35 cycles
+
 
 #include "thread_internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
+
+#ifdef NDEBUG
+#define DBG_ASSERT(expr) do { if (!(expr)) __builtin_unreachable(); } while (0)
+#else
+#define DBG_ASSERT(expr) assert(expr)
+#endif
 
 struct pool {
     thread_hot_t **data;
@@ -62,6 +69,7 @@ int is_pool_empty(pool *p) {
 
 static inline __attribute__((always_inline))
 int pool_put_last(pool *p, thread_hot_t *th) {
+    DBG_ASSERT((p->tail - p->head) <= p->mask);
     p->data[p->tail & p->mask] = th;
     p->tail++;
     return 0;
@@ -73,6 +81,13 @@ thread_hot_t *pool_remove_first(pool *p) {
     p->head++;
     __builtin_prefetch(&p->data[p->head & p->mask], 0, 3);
     return th;
+}
+
+
+static inline __attribute__((always_inline))
+thread_hot_t *pool_remove_last(pool *p) {
+    p->tail--;
+    return p->data[p->tail & p->mask];
 }
 
 #endif /* __RING_POOL_H__ */

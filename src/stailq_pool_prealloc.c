@@ -1,7 +1,7 @@
 #pragma GCC optimize("Ofast,unroll-loops")
 
 // Implémentation de pool.h avec STAILQ et nœuds pré-alloués.
-// Zéro malloc/free après l'initialisation.
+
 
 #include <stdlib.h>
 #include <sys/queue.h>

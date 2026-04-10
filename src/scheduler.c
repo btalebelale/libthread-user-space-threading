@@ -1,6 +1,6 @@
 #include "scheduler.h"
 
-#define SCHED_MAX_THREADS 16384
+#define SCHED_MAX_THREADS (16384 * 4)
 
 pool *ready_queue = NULL;
 thread_hot_t *current = NULL;

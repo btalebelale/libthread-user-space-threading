@@ -9,39 +9,33 @@
 #include <sys/mman.h>
 #include <valgrind/valgrind.h>
 
-// 64 KiB par stack thread (demand-paged : seules les pages touchées consomment de la RAM)
+
 #define STACK_SIZE  (64 * 1024)
-// Capacité max de l'arène (threads simultanés). 16384 * 64K = 1GB d'espace virtuel.
-// Demand-paging : seules les pages touchées consomment de la RAM physique.
-#define ARENA_CAP   16384
 
-// Sous-système mémoire : arène de stacks + slabs hot/cold
-// Deux slabs parallèles indexés de la même façon :
-//   hot_slab[i]  = données accédées à chaque yield (rsp, state)
-//   cold_slab[i] = données accédées rarement (retval, stack_base, waiting, ...)
-// Macro THREAD_COLD(hot_ptr) : O(1) pointer arithmetic pour passer de hot à cold.
+#define STACK_CAP   16384
+
+#define THREAD_CAP  262144
 
 
-// Arène de stacks : région mmap'd contiguë découpée en blocs de STACK_SIZE
 static void *stack_arena;
 static int   stack_arena_next;
-// Free-list intrusive : le premier mot de chaque stack libéré pointe au suivant
+
 static void *stack_free_head;
 
-// Slabs parallèles hot/cold
+
 static thread_hot_t  *hot_slab;
 static thread_cold_t *cold_slab;
 static int            thread_slab_next;
-// Free-list intrusive : on réutilise le champ 'rsp' du hot struct libéré
+
 static thread_hot_t  *thread_free_head;
 
-// Accès cold depuis un pointeur hot : O(1) via index dans le slab
+
 #define THREAD_COLD(hot) (&cold_slab[(hot) - hot_slab])
 
 __attribute__((cold))
 static void mem_init(void)
 {
-    stack_arena = mmap(NULL, (size_t)ARENA_CAP * STACK_SIZE,
+    stack_arena = mmap(NULL, (size_t)STACK_CAP * STACK_SIZE,
                        PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (__builtin_expect(stack_arena == MAP_FAILED, 0))
@@ -50,7 +44,7 @@ static void mem_init(void)
         exit(1);
     }
 
-    hot_slab = mmap(NULL, (size_t)ARENA_CAP * sizeof(thread_hot_t),
+    hot_slab = mmap(NULL, (size_t)THREAD_CAP * sizeof(thread_hot_t),
                     PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (__builtin_expect(hot_slab == MAP_FAILED, 0))
@@ -59,7 +53,7 @@ static void mem_init(void)
         exit(1);
     }
 
-    cold_slab = mmap(NULL, (size_t)ARENA_CAP * sizeof(thread_cold_t),
+    cold_slab = mmap(NULL, (size_t)THREAD_CAP * sizeof(thread_cold_t),
                      PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (__builtin_expect(cold_slab == MAP_FAILED, 0))
@@ -78,11 +72,11 @@ __attribute__((cold))
 static void mem_destroy(void)
 {
     if (stack_arena && stack_arena != MAP_FAILED)
-        munmap(stack_arena, (size_t)ARENA_CAP * STACK_SIZE);
+        munmap(stack_arena, (size_t)STACK_CAP * STACK_SIZE);
     if (hot_slab && hot_slab != MAP_FAILED)
-        munmap(hot_slab, (size_t)ARENA_CAP * sizeof(thread_hot_t));
+        munmap(hot_slab, (size_t)THREAD_CAP * sizeof(thread_hot_t));
     if (cold_slab && cold_slab != MAP_FAILED)
-        munmap(cold_slab, (size_t)ARENA_CAP * sizeof(thread_cold_t));
+        munmap(cold_slab, (size_t)THREAD_CAP * sizeof(thread_cold_t));
     stack_arena = NULL;
     hot_slab = NULL;
     cold_slab = NULL;
@@ -96,7 +90,7 @@ static void *stack_alloc(void)
         stack_free_head = *(void **)s;
         return s;
     }
-    if (__builtin_expect(stack_arena_next >= ARENA_CAP, 0))
+    if (__builtin_expect(stack_arena_next >= STACK_CAP, 0))
         return NULL;
 
     return (char *)stack_arena + ((size_t)stack_arena_next++ * STACK_SIZE);
@@ -117,7 +111,7 @@ static thread_hot_t *thread_alloc(void)
         thread_free_head = (thread_hot_t *)t->rsp;
         return t;
     }
-    if (__builtin_expect(thread_slab_next >= ARENA_CAP, 0))
+    if (__builtin_expect(thread_slab_next >= THREAD_CAP, 0))
         return NULL;
     return &hot_slab[thread_slab_next++];
 }
@@ -153,7 +147,7 @@ static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
     // Adresse de retour pour context_switch → ret → thread_trampoline
     *(--s) = (void *)thread_trampoline;
 
-    // Registres callee-saved (pop order: r15, r14, r13, r12, rbp, rbx)
+   
     *(--s) = 0;             // rbx
     *(--s) = 0;             // rbp
     *(--s) = (void *)func;  // r12 = func
@@ -183,7 +177,7 @@ static void thread_system_destroy(void)
 {
     while (!is_sched_empty())
     {
-        thread_hot_t *t = sched_dequeue();
+        thread_hot_t *t = sched_dequeue_fifo();
         thread_cold_t *tc = THREAD_COLD(t);
         if (tc->stack_base)
             VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
@@ -252,8 +246,13 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     void *stack = stack_alloc();
     if (__builtin_expect(!stack, 0))
     {
-        thread_release(t);
-        return -1;
+        thread_cold_t *tc = THREAD_COLD(t);
+        tc->stack_base = NULL;
+        tc->waiting = NULL;
+        tc->retval = func(arg);
+        t->state = FINISHED;
+        *newthread = (thread_t)t;
+        return 0;
     }
 
     thread_cold_t *tc = THREAD_COLD(t);
@@ -285,7 +284,7 @@ int thread_yield(void)
     prev->state = READY;
     sched_enqueue(prev);
 
-    thread_hot_t *next = sched_dequeue();
+    thread_hot_t *next = sched_dequeue_fifo();
     next->state = RUNNING;
     current = next;
 
@@ -305,7 +304,7 @@ int thread_join(thread_t thread, void **retval)
         tc->waiting = current;
         current->state = BLOCKED;
 
-        thread_hot_t *next = sched_dequeue();
+        thread_hot_t *next = sched_dequeue_lifo();
         if (__builtin_expect(!next, 0))
             return -1;
 
@@ -346,7 +345,7 @@ void thread_exit(void *retval)
     if (__builtin_expect(is_sched_empty(), 0))
         context_restore(exit_rsp);
 
-    thread_hot_t *next = sched_dequeue();
+    thread_hot_t *next = sched_dequeue_lifo();
     next->state = RUNNING;
     current = next;
 

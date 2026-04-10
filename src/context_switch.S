@@ -1,13 +1,10 @@
-// Context switch minimal pour x86-64 (System V ABI)
-// Sauvegarde uniquement les registres callee-saved : rbx, rbp, r12-r15, rsp
-// Pas de sauvegarde signal mask (pas de syscall)
+
 
 .text
 .hidden thread_entry
 
 // void context_switch(void **old_rsp, void *new_rsp)
-// Sauvegarde le contexte courant sur la pile, stocke rsp dans *old_rsp,
-// charge new_rsp et restaure le contexte de destination.
+
 .globl context_switch
 .type context_switch, @function
 context_switch:
@@ -29,8 +26,7 @@ context_switch:
 .size context_switch, .-context_switch
 
 // void context_restore(void *new_rsp) __attribute__((noreturn))
-// Charge new_rsp et restaure le contexte sans sauvegarder l'ancien.
-// Utilisé par thread_exit (pas besoin de sauvegarder le thread sortant).
+
 .globl context_restore
 .type context_restore, @function
 context_restore:
