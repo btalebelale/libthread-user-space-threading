@@ -69,7 +69,8 @@ tests/%-pthread: tests/%.c
 check: all
 	LD_LIBRARY_PATH=. ./scripts/run_tests.sh
 
-valgrind: all
+valgrind: clean
+	$(MAKE) all CFLAGS="$(CFLAGS) -mno-avx512f"
 	LD_LIBRARY_PATH=. ./scripts/run_valgrind.sh
 
 graphs: all pthreads
