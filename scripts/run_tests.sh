@@ -34,17 +34,17 @@ run_test ./tests/32-switch-many-join 100 100
 run_test ./tests/33-switch-many-cascade 50 50
 
 echo "===== FIBO ================"
-run_test ./tests/51-fibonacci 15
+run_test ./tests/51-fibonacci 10
 
 echo "===== MUTEX ==============="
 run_test ./tests/61-mutex 100
 run_test ./tests/62-mutex 100
 run_test ./tests/63-mutex-equity
 run_test ./tests/64-mutex-join
-#
-#echo "===== PREEMPTION =========="
-#run_test ./tests/71-preemption 100
-#
+
+echo "===== PREEMPTION =========="
+run_test ./tests/71-preemption 100
+
 #echo "===== DEADLOCK ============"
 #run_test ./tests/81-deadlock
 

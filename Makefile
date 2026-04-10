@@ -21,9 +21,11 @@ TEST_BINS = tests/01-main \
             tests/61-mutex \
             tests/62-mutex \
             tests/63-mutex-equity \
-            tests/64-mutex-join 
-            #tests/71-preemption \
+            tests/64-mutex-join \
+            tests/71-preemption 
             #tests/81-deadlock
+
+
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
@@ -40,6 +42,9 @@ src/%.o: src/%.c src/thread.h
 
 tests/%: tests/%.c $(LIB_NAME)
 	$(CC) $(CFLAGS) $< -o $@ -L. -lthread
+
+tests/71-preemption: tests/71-preemption.c $(LIB_SRC)
+	$(CC) $(CFLAGS) -DUSE_PREEMPTION $^ -o $@
 
 pthreads: $(TEST_PTHREAD_BINS)
 

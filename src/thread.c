@@ -4,10 +4,62 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <valgrind/valgrind.h>
+#include <sys/time.h> 
+#include <signal.h>
 
-#define STACK_SIZE (16 * 1024)
+#define STACK_SIZE (8 * 1024)
+
 
 static char exit_stack[STACK_SIZE];
+
+
+static void block_sigvtalrm(sigset_t *old)                                                                                            
+{ 
+    #ifdef USE_PREEMPTION                                                                                                                                    
+      sigset_t mask;
+      sigemptyset(&mask);                                                                                                               
+      sigaddset(&mask, SIGALRM);
+      sigprocmask(SIG_BLOCK, &mask, old);  
+    #else 
+      (void)old;
+    #endif                                                                                             
+}                                       
+
+static void restore_sigmask(sigset_t *old)                                                                                            
+{
+  #ifdef USE_PREEMPTION
+    sigprocmask(SIG_SETMASK, old, NULL); 
+  #else 
+    (void)old;
+  #endif
+}      
+
+#ifdef USE_PREEMPTION
+
+#define PREEMPT_INTERVAL 1000 // 1 ms
+                                          
+static void preempt_handler(int sig)
+{                                                                                                                                     
+    (void)sig;
+    thread_yield();                                                                                                                   
+}  
+
+static void preempt_init(void)              
+{                                       
+  struct sigaction sa;
+  sa.sa_handler = preempt_handler;                                                                                                  
+  sa.sa_flags = SA_RESTART | SA_NODEFER;
+  sigemptyset(&sa.sa_mask);                                                                                                         
+  sigaction(SIGALRM, &sa, NULL);        
+                                      
+  struct itimerval timer;
+  timer.it_value.tv_sec = 0;                                                                                                        
+  timer.it_value.tv_usec = PREEMPT_INTERVAL;
+  timer.it_interval = timer.it_value;                                                                                               
+  setitimer(ITIMER_REAL, &timer, NULL);
+}
+
+#endif
 
 /*
 Appelée quand le dernier thread (qui n'est pas le main) se termine.
@@ -49,6 +101,7 @@ static void thread_system_destroy(void)
     }
 }
 
+
 /*
 Initialise le système de threads (crée un thread pour le main)
 Appelle atexit pour nettoyer le système à la fin en appelant
@@ -72,6 +125,10 @@ static void init_system(void)
     current->stack = NULL;
     current->retval = NULL;
     current->waiting = NULL;
+
+    #ifdef USE_PREEMPTION                       
+      preempt_init();                                                                                                                   
+    #endif
 }
 
 /*
@@ -80,6 +137,12 @@ Elle adapte la signature de la fonction et appelle thread_exit à la fin.
 */
 static void thread_start(void *(*func)(void *), void *arg)
 {
+  #ifdef USE_PREEMPTION                                                                                                                 
+      sigset_t mask;                                                                                                                    
+      sigemptyset(&mask);                                                                                                             
+      sigaddset(&mask, SIGALRM);
+      sigprocmask(SIG_UNBLOCK, &mask, NULL);                                                                                            
+  #endif
     void *ret = func(arg);
     thread_exit(ret);
 }
@@ -95,6 +158,9 @@ thread_t thread_self(void)
 
 int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
 {
+    sigset_t old;
+    block_sigvtalrm(&old);
+
     if (current == NULL)
     {
       init_system();
@@ -102,6 +168,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     thread_m *t = malloc(sizeof(thread_m));
     if (!t)
     {
+        restore_sigmask(&old);
         return -1;
     }
 
@@ -109,6 +176,8 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     t->stack = malloc(t->stack_size);
     if (!t->stack)
     {
+        free(t);
+        restore_sigmask(&old);
         return -1;
     }
 
@@ -138,12 +207,16 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     sched_enqueue(t);
 
     *newthread = (thread_t)t;
+    restore_sigmask(&old);
 
     return 0;
 }
 
 int thread_yield(void)
 {
+    sigset_t old;
+    block_sigvtalrm(&old);
+
     if (current == NULL)
     {
         init_system();
@@ -151,6 +224,7 @@ int thread_yield(void)
 
     if (is_sched_empty())
     {
+        restore_sigmask(&old);
         return 0;
     }
 
@@ -168,12 +242,15 @@ int thread_yield(void)
     {
       _longjmp(next->env, 1);
     }
-
+    restore_sigmask(&old);
     return 0;
 }
 
 int thread_join(thread_t thread, void **retval)
 {
+    sigset_t old;
+    block_sigvtalrm(&old);
+
     thread_m *t = (thread_m *)thread;
 
     if (t->state != FINISHED)
@@ -182,8 +259,10 @@ int thread_join(thread_t thread, void **retval)
         current->state = BLOCKED;
 
         thread_m *next = sched_dequeue();
-        if (!next)
+        if (!next){
+            restore_sigmask(&old);
             return -1;
+        }
 
         next->state = RUNNING;
         thread_m *prev = current;
@@ -205,11 +284,16 @@ int thread_join(thread_t thread, void **retval)
     free(t->stack);
     free(t);
 
+    restore_sigmask(&old);
+
     return 0;
 }
 
 void thread_exit(void *retval)
 {
+    sigset_t old;
+    block_sigvtalrm(&old);
+
     current->retval = retval;
 
     current->state = FINISHED;
@@ -253,6 +337,9 @@ int thread_mutex_destroy(thread_mutex_t *mutex)
 
 int thread_mutex_lock(thread_mutex_t *mutex)
 {
+    sigset_t old;
+    block_sigvtalrm(&old);
+
     thread_mutex_m *m = (thread_mutex_m *)mutex;
     if(!m->locked){
       m->locked = 1;
@@ -270,11 +357,17 @@ int thread_mutex_lock(thread_mutex_t *mutex)
     if (_setjmp(prev->env) == 0) {
         _longjmp(next->env, 1);
     }
+
+    restore_sigmask(&old);
+
     return 0;
 }
 
 int thread_mutex_unlock(thread_mutex_t *mutex)
 {
+  sigset_t old;
+  block_sigvtalrm(&old);
+
   thread_mutex_m *m = (thread_mutex_m *)mutex;
   if(STAILQ_EMPTY(&m->waiting)){
    m->locked = 0;
@@ -284,5 +377,8 @@ int thread_mutex_unlock(thread_mutex_t *mutex)
   STAILQ_REMOVE_HEAD(&m->waiting, link);
   t->state = RUNNING;
   sched_enqueue(t);
+
+  restore_sigmask(&old);
+
   return 0;
 }
