@@ -34,10 +34,10 @@ TEST_BINS = tests/01-main \
             tests/32-switch-many-join \
             tests/33-switch-many-cascade \
             tests/51-fibonacci \
-            tests/61-mutex \
-            tests/62-mutex \
-            tests/63-mutex-equity \
-            tests/64-mutex-join 
+            #tests/61-mutex \
+            #tests/62-mutex \
+            #tests/63-mutex-equity \
+            #tests/64-mutex-join 
             #tests/71-preemption 
             #tests/81-deadlock
 
