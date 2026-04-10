@@ -15,22 +15,20 @@ typedef enum
 } state_t;
 
 // HOT : touché à chaque yield — 16 bytes, 4 par cache line
-// PAS d'aligned(64) par struct : on aligne le TABLEAU pour que
-// 4 thread_hot tiennent dans 1 cache line (64 / 16 = 4)
 typedef struct thread_hot
 {
-    void *rsp;           // 8B — stack pointer (sauvegardé par context_switch)
-    uint32_t state;      // 4B — état courant
-    uint32_t _pad;       // 4B — padding alignement
+    void *rsp;          
+    uint32_t state;      
+    uint32_t _pad;
 } thread_hot_t;
 
 // COLD : touché uniquement à create/join/exit
 typedef struct thread_cold
 {
-    void *retval;                // 8B — valeur de retour du thread
-    void *stack_base;            // 8B — base du stack (NULL pour le main)
-    struct thread_hot *waiting;  // 8B — thread en attente de join sur celui-ci
-    int valgrind_stackid;        // 4B — ID Valgrind pour register/deregister
+    void *retval;                
+    void *stack_base;            
+    struct thread_hot *waiting;  
+    int valgrind_stackid;        
 } thread_cold_t;
 
 // Global pointer to the currently running thread
