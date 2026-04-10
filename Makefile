@@ -2,7 +2,7 @@ CC      = gcc
 SCHED_CFLAGS_fifo = -DSCHED_FIFO
 SCHED_CFLAGS_lifo = -DSCHED_LIFO
 SCHED_CFLAGS_hybrid =
-CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL))
+CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL))
 
 # Implémentation de pool à utiliser :
 #   tab_pool            (tableau, défaut)
