@@ -15,28 +15,22 @@ typedef enum
     FINISHED
 } state_t;
 
-typedef struct thread
+// HOT : touché à chaque yield — 16 bytes, 4 par cache line
+typedef struct thread_hot
 {
-    jmp_buf env;       // sauvegarde les registres du thread
-    void *stack;       // pile du thread
-    size_t stack_size; // la taille
+    void *rsp;          
+    uint32_t state;      
+    uint32_t _pad;
+} thread_hot_t;
 
-    void *retval;           // Thread's return value
-    state_t state;          // Current state of the thread
-    int valgrind_stackid;   // Valgrind ID to register/deregister the custom stack
-    struct thread *waiting; // Pointer to the thread waiting for this one to join
-
-    void *(*func)(void *);
-    void *func_arg;
-
-    STAILQ_ENTRY(thread) link; // Le next du thread
-} thread_m;
-
-
-typedef struct thread_mutex_internal{
-    int locked;  
-    STAILQ_HEAD(, thread) waiting;  // une file de threads bloqués sur ce mutex
-} thread_mutex_m;
+// COLD : touché uniquement à create/join/exit
+typedef struct thread_cold
+{
+    void *retval;                
+    void *stack_base;            
+    struct thread_hot *waiting;  
+    int valgrind_stackid;        
+} thread_cold_t;
 
 // Global pointer to the currently running thread
 extern thread_m *current;

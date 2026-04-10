@@ -1,7 +1,7 @@
 #include "scheduler.h"
 #include "thread_internal.h"
 
-#include <stdlib.h>
+#define SCHED_MAX_THREADS (16384 * 4)
 
 STAILQ_HEAD(thread_queue, thread);
 

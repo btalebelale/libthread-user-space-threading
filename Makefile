@@ -1,8 +1,24 @@
 CC      = gcc
-CFLAGS  = -Wall -Wextra -Werror -g -fPIC -I./src -I./debug
+SCHED_CFLAGS_fifo = -DSCHED_FIFO
+SCHED_CFLAGS_lifo = -DSCHED_LIFO
+SCHED_CFLAGS_hybrid =
+CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL))
 
-LIB_SRC = src/thread.c src/scheduler.c
-LIB_OBJ = $(LIB_SRC:.c=.o)
+# Implémentation de pool à utiliser :
+#   tab_pool            (tableau, défaut)
+#   stailq_pool         (STAILQ + wrapper malloc par nœud)
+#   stailq_pool_prealloc (STAILQ + nœuds pré-alloués, zéro malloc après init)
+POOL_IMPL ?= ring_pool
+
+# Politique d'ordonnancement :
+#   hybrid (défaut) : yield=FIFO (équité) + join/exit=LIFO (DFS)
+#   fifo            : tout FIFO (BFS)
+#   lifo            : tout LIFO (DFS pur)
+SCHED_IMPL ?= hybrid
+
+LIB_SRC_C = src/thread.c src/scheduler.c
+LIB_SRC_S = src/context_switch.S
+LIB_OBJ   = $(LIB_SRC_C:.c=.o) $(LIB_SRC_S:.S=.o)
 LIB_NAME = libthread.so
 
 TEST_BINS = tests/01-main \
@@ -54,7 +70,8 @@ tests/%-pthread: tests/%.c
 check: all
 	LD_LIBRARY_PATH=. ./scripts/run_tests.sh
 
-valgrind: all
+valgrind: clean
+	$(MAKE) all CFLAGS="$(CFLAGS) -mno-avx512f"
 	LD_LIBRARY_PATH=. ./scripts/run_valgrind.sh
 
 graphs: all pthreads

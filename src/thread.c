@@ -7,42 +7,57 @@
 #include <sys/time.h> 
 #include <signal.h>
 
-#define STACK_SIZE (8 * 1024)
+
+#define STACK_SIZE  (64 * 1024)
+
+#define STACK_CAP   16384
+
+#define THREAD_CAP  262144
 
 
-static char exit_stack[STACK_SIZE];
+static void *stack_arena;
+static int   stack_arena_next;
+
+static void *stack_free_head;
 
 
-static void block_sigvtalrm(sigset_t *old)                                                                                            
-{ 
-    #ifdef USE_PREEMPTION                                                                                                                                    
-      sigset_t mask;
-      sigemptyset(&mask);                                                                                                               
-      sigaddset(&mask, SIGALRM);
-      sigprocmask(SIG_BLOCK, &mask, old);  
-    #else 
-      (void)old;
-    #endif                                                                                             
-}                                       
+static thread_hot_t  *hot_slab;
+static thread_cold_t *cold_slab;
+static int            thread_slab_next;
+
+static thread_hot_t  *thread_free_head;
+
+
+#define THREAD_COLD(hot) (&cold_slab[(hot) - hot_slab])
 
 static void restore_sigmask(sigset_t *old)                                                                                            
 {
-  #ifdef USE_PREEMPTION
-    sigprocmask(SIG_SETMASK, old, NULL); 
-  #else 
-    (void)old;
-  #endif
-}      
+    stack_arena = mmap(NULL, (size_t)STACK_CAP * STACK_SIZE,
+                       PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (__builtin_expect(stack_arena == MAP_FAILED, 0))
+    {
+        perror("mmap stack arena");
+        exit(1);
+    }
 
-#ifdef USE_PREEMPTION
+    hot_slab = mmap(NULL, (size_t)THREAD_CAP * sizeof(thread_hot_t),
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (__builtin_expect(hot_slab == MAP_FAILED, 0))
+    {
+        perror("mmap hot slab");
+        exit(1);
+    }
 
-#define PREEMPT_INTERVAL 1000 // 1 ms
-                                          
-static void preempt_handler(int sig)
-{                                                                                                                                     
-    (void)sig;
-    thread_yield();                                                                                                                   
-}  
+    cold_slab = mmap(NULL, (size_t)THREAD_CAP * sizeof(thread_cold_t),
+                     PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (__builtin_expect(cold_slab == MAP_FAILED, 0))
+    {
+        perror("mmap cold slab");
+        exit(1);
+    }
 
 static void preempt_init(void)              
 {                                       
@@ -59,13 +74,99 @@ static void preempt_init(void)
   setitimer(ITIMER_REAL, &timer, NULL);
 }
 
-#endif
+__attribute__((cold))
+static void mem_destroy(void)
+{
+    if (stack_arena && stack_arena != MAP_FAILED)
+        munmap(stack_arena, (size_t)STACK_CAP * STACK_SIZE);
+    if (hot_slab && hot_slab != MAP_FAILED)
+        munmap(hot_slab, (size_t)THREAD_CAP * sizeof(thread_hot_t));
+    if (cold_slab && cold_slab != MAP_FAILED)
+        munmap(cold_slab, (size_t)THREAD_CAP * sizeof(thread_cold_t));
+    stack_arena = NULL;
+    hot_slab = NULL;
+    cold_slab = NULL;
+}
 
-/*
-Appelée quand le dernier thread (qui n'est pas le main) se termine.
-Libère le thread courant, nettoie le scheduler et termine le programme.
-Utilisé pour fixer la fuite mémoire du tests/12-join-main.c
-*/
+static void *stack_alloc(void)
+{
+    if (__builtin_expect(stack_free_head != NULL, 1))
+    {
+        void *s = stack_free_head;
+        stack_free_head = *(void **)s;
+        return s;
+    }
+    if (__builtin_expect(stack_arena_next >= STACK_CAP, 0))
+        return NULL;
+
+    return (char *)stack_arena + ((size_t)stack_arena_next++ * STACK_SIZE);
+}
+
+static void stack_release(void *s)
+{
+    *(void **)s = stack_free_head;
+    stack_free_head = s;
+}
+
+// Free-list intrusive via le champ rsp (inutilisé quand le thread est libéré)
+static thread_hot_t *thread_alloc(void)
+{
+    if (__builtin_expect(thread_free_head != NULL, 1))
+    {
+        thread_hot_t *t = thread_free_head;
+        thread_free_head = (thread_hot_t *)t->rsp;
+        return t;
+    }
+    if (__builtin_expect(thread_slab_next >= THREAD_CAP, 0))
+        return NULL;
+    return &hot_slab[thread_slab_next++];
+}
+
+static void thread_release(thread_hot_t *t)
+{
+    t->rsp = (void *)thread_free_head;
+    thread_free_head = t;
+}
+
+// Stack dédié pour clean_exit
+static char exit_stack[4096] __attribute__((aligned(16)));
+// Frame pré-calculé pour clean_exit (évite de recalculer à chaque thread_exit)
+static void *exit_rsp;
+
+// Point d'entrée C pour les nouveaux threads, appelé depuis thread_trampoline (asm)
+__attribute__((visibility("hidden")))
+void thread_entry(void *(*func)(void *), void *arg)
+{
+    void *ret = func(arg);
+    thread_exit(ret);
+    __builtin_unreachable();
+}
+
+// Initialise le stack d'un nouveau thread pour context_switch.
+static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
+{
+    uintptr_t sp = (uintptr_t)stack_base + STACK_SIZE;
+    sp &= ~(uintptr_t)0xF; // alignement 16 bytes
+
+    void **s = (void **)sp;
+
+    // Adresse de retour pour context_switch → ret → thread_trampoline
+    *(--s) = (void *)thread_trampoline;
+
+   
+    *(--s) = 0;             // rbx
+    *(--s) = 0;             // rbp
+    *(--s) = (void *)func;  // r12 = func
+    *(--s) = arg;           // r13 = arg
+    *(--s) = 0;             // r14
+    *(--s) = 0;             // r15
+
+    return s;
+}
+
+// Cycle de vie du système de threads
+
+__attribute__((cold))
 static void clean_exit(void)
 {
     VALGRIND_STACK_DEREGISTER(current->valgrind_stackid);
@@ -84,20 +185,10 @@ static void thread_system_destroy(void)
 {
     while (!is_sched_empty())
     {
-        thread_m *t = sched_dequeue();
-
-        if (t->stack != NULL)
-        {
-            VALGRIND_STACK_DEREGISTER(t->valgrind_stackid);
-            free(t->stack);
-        }
-
-        free(t);
-    }
-    if (current != NULL)
-    {
-        free(current);
-        current = NULL;
+        thread_hot_t *t = sched_dequeue_fifo();
+        thread_cold_t *tc = THREAD_COLD(t);
+        if (tc->stack_base)
+            VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
     }
 }
 
@@ -163,13 +254,13 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
 
     if (current == NULL)
     {
-      init_system();
-    }
-    thread_m *t = malloc(sizeof(thread_m));
-    if (!t)
-    {
-        restore_sigmask(&old);
-        return -1;
+        thread_cold_t *tc = THREAD_COLD(t);
+        tc->stack_base = NULL;
+        tc->waiting = NULL;
+        tc->retval = func(arg);
+        t->state = FINISHED;
+        *newthread = (thread_t)t;
+        return 0;
     }
 
     t->stack_size = STACK_SIZE;
@@ -233,8 +324,7 @@ int thread_yield(void)
     prev->state = READY;
     sched_enqueue(prev);
 
-    thread_m *next = sched_dequeue();
-
+    thread_hot_t *next = sched_dequeue_fifo();
     next->state = RUNNING;
     current = next;
 
@@ -258,9 +348,8 @@ int thread_join(thread_t thread, void **retval)
         t->waiting = current;
         current->state = BLOCKED;
 
-        thread_m *next = sched_dequeue();
-        if (!next){
-            restore_sigmask(&old);
+        thread_hot_t *next = sched_dequeue_lifo();
+        if (__builtin_expect(!next, 0))
             return -1;
         }
 
@@ -307,12 +396,7 @@ void thread_exit(void *retval)
     if (is_sched_empty())
     {
 
-        void *top = exit_stack + sizeof(exit_stack);
-        asm("mov %0, %%rsp" : : "r"(top));
-        clean_exit();
-    }
-
-    thread_m *next = sched_dequeue();
+    thread_hot_t *next = sched_dequeue_lifo();
     next->state = RUNNING;
     current = next;
 

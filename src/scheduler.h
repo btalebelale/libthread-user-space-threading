@@ -1,21 +1,14 @@
 #ifndef __SCHEDULER_H__
 #define __SCHEDULER_H__
 
-#include "thread_internal.h"
 
-// Initializes the thread ready queue
-void sched_init(void);
 
-// Adds a thread to the tail of the ready queue
-void sched_enqueue(thread_m *t);
-
-// Removes and returns the first thread from the ready queue
-thread_m *sched_dequeue(void);
-
-// Checks if the ready queue is empty (returns 1 if empty, 0 otherwise)
-int is_sched_empty(void);
-
-// Frees the scheduler's internal structures (does not free threads)
-void sched_cleanup(void);
+#if defined(SCHED_FIFO)
+#include "scheduler_fifo.h"
+#elif defined(SCHED_LIFO)
+#include "scheduler_lifo.h"
+#else
+#include "scheduler_hybrid.h"
+#endif
 
 #endif
