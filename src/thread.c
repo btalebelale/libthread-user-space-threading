@@ -1,11 +1,13 @@
+#pragma GCC optimize("Ofast,unroll-loops")
+
 #include "thread.h"
 #include "scheduler.h"
 
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <sys/mman.h>
 #include <valgrind/valgrind.h>
-#include <sys/time.h> 
-#include <signal.h>
 
 
 #define STACK_SIZE  (64 * 1024)
@@ -30,7 +32,8 @@ static thread_hot_t  *thread_free_head;
 
 #define THREAD_COLD(hot) (&cold_slab[(hot) - hot_slab])
 
-static void restore_sigmask(sigset_t *old)                                                                                            
+__attribute__((cold))
+static void mem_init(void)
 {
     stack_arena = mmap(NULL, (size_t)STACK_CAP * STACK_SIZE,
                        PROT_READ | PROT_WRITE,
@@ -59,19 +62,10 @@ static void restore_sigmask(sigset_t *old)
         exit(1);
     }
 
-static void preempt_init(void)              
-{                                       
-  struct sigaction sa;
-  sa.sa_handler = preempt_handler;                                                                                                  
-  sa.sa_flags = SA_RESTART | SA_NODEFER;
-  sigemptyset(&sa.sa_mask);                                                                                                         
-  sigaction(SIGALRM, &sa, NULL);        
-                                      
-  struct itimerval timer;
-  timer.it_value.tv_sec = 0;                                                                                                        
-  timer.it_value.tv_usec = PREEMPT_INTERVAL;
-  timer.it_interval = timer.it_value;                                                                                               
-  setitimer(ITIMER_REAL, &timer, NULL);
+    stack_arena_next = 0;
+    stack_free_head = NULL;
+    thread_slab_next = 0;
+    thread_free_head = NULL;
 }
 
 __attribute__((cold))
@@ -169,18 +163,16 @@ static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
 __attribute__((cold))
 static void clean_exit(void)
 {
-    VALGRIND_STACK_DEREGISTER(current->valgrind_stackid);
-    free(current->stack);
-    free(current);
+    thread_cold_t *cc = THREAD_COLD(current);
+    if (cc->stack_base)
+        VALGRIND_STACK_DEREGISTER(cc->valgrind_stackid);
     current = NULL;
+    sched_cleanup();
+    mem_destroy();
     exit(0);
 }
 
-/*
-Appelée automatiquement à la fin du programme (grâce à atexit).
-Libère tous les threads restants notamment le thread main.
-Utilisé pour nettoyer le thread main à la fin
-*/
+__attribute__((cold))
 static void thread_system_destroy(void)
 {
     while (!is_sched_empty())
@@ -190,69 +182,69 @@ static void thread_system_destroy(void)
         if (tc->stack_base)
             VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
     }
+    current = NULL;
+    sched_cleanup();
+    mem_destroy();
 }
 
-
-/*
-Initialise le système de threads (crée un thread pour le main)
-Appelle atexit pour nettoyer le système à la fin en appelant
-la fonction "thread_system_destroy"
-*/
+__attribute__((cold))
 static void init_system(void)
 {
+    mem_init();
     sched_init();
-
     atexit(thread_system_destroy);
 
-    current = malloc(sizeof(thread_m));
-    if (!current)
+    current = thread_alloc();
+    if (__builtin_expect(!current, 0))
     {
-        perror("malloc main thread");
+        perror("thread_alloc main");
         exit(1);
     }
-    _setjmp(current->env);
     current->state = RUNNING;
-    current->stack_size = 0;
-    current->stack = NULL;
-    current->retval = NULL;
-    current->waiting = NULL;
+    current->rsp = NULL;
 
-    #ifdef USE_PREEMPTION                       
-      preempt_init();                                                                                                                   
-    #endif
+    thread_cold_t *cc = THREAD_COLD(current);
+    cc->stack_base = NULL;
+    cc->retval = NULL;
+    cc->waiting = NULL;
+
+    // Pré-calculer le frame exit_stack une seule fois
+    uintptr_t sp = (uintptr_t)(exit_stack + sizeof(exit_stack));
+    sp &= ~(uintptr_t)0xF;
+    void **s = (void **)sp;
+    *(--s) = (void *)clean_exit;
+    *(--s) = 0; // rbx
+    *(--s) = 0; // rbp
+    *(--s) = 0; // r12
+    *(--s) = 0; // r13
+    *(--s) = 0; // r14
+    *(--s) = 0; // r15
+    exit_rsp = s;
 }
 
-/*
-Fonction wrapper utilisée par makecontext.
-Elle adapte la signature de la fonction et appelle thread_exit à la fin.
-*/
-static void thread_start(void *(*func)(void *), void *arg)
-{
-  #ifdef USE_PREEMPTION                                                                                                                 
-      sigset_t mask;                                                                                                                    
-      sigemptyset(&mask);                                                                                                             
-      sigaddset(&mask, SIGALRM);
-      sigprocmask(SIG_UNBLOCK, &mask, NULL);                                                                                            
-  #endif
-    void *ret = func(arg);
-    thread_exit(ret);
-}
+// API publique
 
+
+__attribute__((visibility("default")))
 thread_t thread_self(void)
 {
-    if (current == NULL)
-    {
-      init_system();
-    }
+    if (__builtin_expect(current == NULL, 0))
+        init_system();
     return (thread_t)current;
 }
 
+__attribute__((visibility("default")))
 int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
 {
-    sigset_t old;
-    block_sigvtalrm(&old);
+    if (__builtin_expect(current == NULL, 0))
+        init_system();
 
-    if (current == NULL)
+    thread_hot_t *t = thread_alloc();
+    if (__builtin_expect(!t, 0))
+        return -1;
+
+    void *stack = stack_alloc();
+    if (__builtin_expect(!stack, 0))
     {
         thread_cold_t *tc = THREAD_COLD(t);
         tc->stack_base = NULL;
@@ -263,64 +255,32 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
         return 0;
     }
 
-    t->stack_size = STACK_SIZE;
-    t->stack = malloc(t->stack_size);
-    if (!t->stack)
-    {
-        free(t);
-        restore_sigmask(&old);
-        return -1;
-    }
-
+    thread_cold_t *tc = THREAD_COLD(t);
+    tc->stack_base = stack;
     t->state = READY;
-    t->retval = NULL;
-    t->waiting = NULL;
-    t->func = func;
-    t->func_arg = arg;
+    tc->retval = NULL;
+    tc->waiting = NULL;
+    t->rsp = stack_init(stack, func, arg);
 
-    t->valgrind_stackid = VALGRIND_STACK_REGISTER(t->stack, t->stack + t->stack_size);
-
-    void *old_rsp = NULL;
-    void *top = t->stack + t->stack_size;
-
-    asm("mov %%rsp, %0" : "=r"(old_rsp));
-    asm("mov %0, %%rsp" : : "r"(top));
-
-    if (_setjmp(t->env) == 0)
-    {
-        asm("mov %0, %%rsp" : : "r"(old_rsp));
-    }
-    else
-    {
-        thread_start(current->func, current->func_arg);
-    }
+    tc->valgrind_stackid = VALGRIND_STACK_REGISTER(
+        stack, (char *)stack + STACK_SIZE);
 
     sched_enqueue(t);
-
     *newthread = (thread_t)t;
-    restore_sigmask(&old);
-
     return 0;
 }
 
+// Hot path : aucun accès cold
+__attribute__((visibility("default"), hot))
 int thread_yield(void)
 {
-    sigset_t old;
-    block_sigvtalrm(&old);
-
-    if (current == NULL)
-    {
+    if (__builtin_expect(current == NULL, 0))
         init_system();
-    }
 
-    if (is_sched_empty())
-    {
-        restore_sigmask(&old);
+    if (__builtin_expect(is_sched_empty(), 0))
         return 0;
-    }
 
-    thread_m *prev = current;
-
+    thread_hot_t *prev = current;
     prev->state = READY;
     sched_enqueue(prev);
 
@@ -328,141 +288,79 @@ int thread_yield(void)
     next->state = RUNNING;
     current = next;
 
-    if (_setjmp(prev->env) == 0)
-    {
-      _longjmp(next->env, 1);
-    }
-    restore_sigmask(&old);
+    __builtin_prefetch(next->rsp, 0, 3);
+    context_switch(&prev->rsp, next->rsp);
     return 0;
 }
 
+__attribute__((visibility("default"), hot))
 int thread_join(thread_t thread, void **retval)
 {
-    sigset_t old;
-    block_sigvtalrm(&old);
+    thread_hot_t *t = (thread_hot_t *)thread;
+    thread_cold_t *tc = THREAD_COLD(t);
 
-    thread_m *t = (thread_m *)thread;
-
-    if (t->state != FINISHED)
+    if (__builtin_expect(t->state != FINISHED, 1))
     {
-        t->waiting = current;
+        tc->waiting = current;
         current->state = BLOCKED;
 
         thread_hot_t *next = sched_dequeue_lifo();
         if (__builtin_expect(!next, 0))
             return -1;
-        }
 
         next->state = RUNNING;
-        thread_m *prev = current;
+        thread_hot_t *prev = current;
         current = next;
 
-        if (_setjmp(prev->env) == 0)
-        {
-          _longjmp(next->env, 1);
-        }
+        __builtin_prefetch(next->rsp, 0, 3);
+        context_switch(&prev->rsp, next->rsp);
     }
 
     if (retval)
+        *retval = tc->retval;
+
+    if (tc->stack_base)
     {
-        *retval = t->retval;
+        VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
+        stack_release(tc->stack_base);
     }
 
-    VALGRIND_STACK_DEREGISTER(t->valgrind_stackid);
-
-    free(t->stack);
-    free(t);
-
-    restore_sigmask(&old);
-
+    thread_release(t);
     return 0;
 }
 
+__attribute__((visibility("default"), hot))
 void thread_exit(void *retval)
 {
-    sigset_t old;
-    block_sigvtalrm(&old);
-
-    current->retval = retval;
-
+    thread_cold_t *cc = THREAD_COLD(current);
+    cc->retval = retval;
     current->state = FINISHED;
 
-    if (current->waiting)
+    if (__builtin_expect(cc->waiting != NULL, 0))
     {
-        current->waiting->state = READY;
-        sched_enqueue(current->waiting);
+        cc->waiting->state = READY;
+        sched_enqueue(cc->waiting);
     }
 
-    if (is_sched_empty())
-    {
+    if (__builtin_expect(is_sched_empty(), 0))
+        context_restore(exit_rsp);
 
     thread_hot_t *next = sched_dequeue_lifo();
     next->state = RUNNING;
     current = next;
 
-    _longjmp(next->env, 1);
-
-    exit(1);
+    context_restore(next->rsp);
 }
 
-int thread_mutex_init(thread_mutex_t *mutex)
-{
-  thread_mutex_m *m = (thread_mutex_m *)mutex;
-  m->locked = 0;
-  STAILQ_INIT(&m->waiting);
-  return 0;
-}
 
-int thread_mutex_destroy(thread_mutex_t *mutex)
-{
-    (void)mutex;
-    return 0;
-}
+// Mutex (stubs)
 
-int thread_mutex_lock(thread_mutex_t *mutex)
-{
-    sigset_t old;
-    block_sigvtalrm(&old);
 
-    thread_mutex_m *m = (thread_mutex_m *)mutex;
-    if(!m->locked){
-      m->locked = 1;
-      return 0;
-    }
-
-    // bloqué : on se met dans la file et on switch 
-    current->state = BLOCKED;
-    STAILQ_INSERT_TAIL(&m->waiting, current, link);
-
-    thread_m *next = sched_dequeue();
-    thread_m *prev = current;
-    next->state = RUNNING;
-    current = next;
-    if (_setjmp(prev->env) == 0) {
-        _longjmp(next->env, 1);
-    }
-
-    restore_sigmask(&old);
-
-    return 0;
-}
-
-int thread_mutex_unlock(thread_mutex_t *mutex)
-{
-  sigset_t old;
-  block_sigvtalrm(&old);
-
-  thread_mutex_m *m = (thread_mutex_m *)mutex;
-  if(STAILQ_EMPTY(&m->waiting)){
-   m->locked = 0;
-   return 0;
-  }
-  thread_m *t = STAILQ_FIRST(&m->waiting);
-  STAILQ_REMOVE_HEAD(&m->waiting, link);
-  t->state = RUNNING;
-  sched_enqueue(t);
-
-  restore_sigmask(&old);
-
-  return 0;
-}
+__attribute__((visibility("default")))
+int thread_mutex_init(thread_mutex_t *mutex)    { (void)mutex; return 0; }
+__attribute__((visibility("default")))
+int thread_mutex_destroy(thread_mutex_t *mutex)  { (void)mutex; return 0; }
+__attribute__((visibility("default")))
+int thread_mutex_lock(thread_mutex_t *mutex)     { (void)mutex; return 0; }
+__attribute__((visibility("default")))
+int thread_mutex_unlock(thread_mutex_t *mutex)   { (void)mutex; return 0; }

@@ -2,9 +2,8 @@
 #define __THREAD_INTERNAL_H__
 
 #include "thread.h"
-#include <setjmp.h>
 #include <stdlib.h>
-#include <sys/queue.h>
+#include <stdint.h>
 
 // Thread states
 typedef enum
@@ -33,6 +32,11 @@ typedef struct thread_cold
 } thread_cold_t;
 
 // Global pointer to the currently running thread
-extern thread_m *current;
+extern thread_hot_t *current;
+
+// Défini dans context_switch.S
+extern void context_switch(void **old_rsp, void *new_rsp);
+extern void context_restore(void *new_rsp) __attribute__((__noreturn__));
+extern void thread_trampoline(void);
 
 #endif
