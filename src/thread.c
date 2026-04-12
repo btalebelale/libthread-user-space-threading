@@ -66,6 +66,9 @@ static void mem_init(void)
         perror("mmap stack arena");
         exit(1);
     }
+    // Huge pages : 1 TLB entry (2MB) couvre 32 stacks de 64KB
+    // Réduit drastiquement les TLB misses pour les workloads multi-threads
+    madvise(stack_arena, (size_t)STACK_CAP * STACK_SIZE, MADV_HUGEPAGE);
     hot_slab = mmap(NULL, (size_t)THREAD_CAP * sizeof(thread_hot_t),
                     PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -237,9 +240,11 @@ static void thread_system_destroy(void)
     mem_destroy();
 }
 
-__attribute__((cold))
+__attribute__((constructor, cold))
 static void init_system(void)
 {
+    if (__builtin_expect(current != NULL, 0))
+        return; // déjà initialisé
     mem_init();
     sched_init();
     last_created = NULL;
@@ -251,10 +256,10 @@ static void init_system(void)
         perror("thread_alloc main");
         exit(1);
     }
-    current->state = RUNNING;
     current->rsp = NULL;
 
     thread_cold_t *cc = THREAD_COLD(current);
+    cc->state = RUNNING;
     cc->stack_base = NULL;
     cc->retval = NULL;
     cc->waiting = NULL;
@@ -280,17 +285,12 @@ static void init_system(void)
 __attribute__((visibility("default")))
 thread_t thread_self(void)
 {
-    if (__builtin_expect(current == NULL, 0))
-        init_system();
     return (thread_t)current;
 }
 
 __attribute__((visibility("default")))
 int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
 {
-    if (__builtin_expect(current == NULL, 0))
-        init_system();
-
     thread_hot_t *t = thread_alloc();
     if (__builtin_expect(!t, 0))
         return -1;
@@ -302,14 +302,14 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
         tc->stack_base = NULL;
         tc->waiting = NULL;
         tc->retval = func(arg);
-        t->state = FINISHED;
+        tc->state = FINISHED;
         *newthread = (thread_t)t;
         return 0;
     }
 
     thread_cold_t *tc = THREAD_COLD(t);
     tc->stack_base = stack;
-    t->state = READY;
+    tc->state = READY;
     tc->retval = NULL;
     tc->waiting = NULL;
     t->rsp = stack_init(stack, func, arg);
@@ -327,12 +327,9 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
 }
 
 // Hot path : aucun accès cold
-__attribute__((visibility("default"), hot))
+__attribute__((visibility("default"), hot, flatten))
 int thread_yield(void)
 {
-    if (__builtin_expect(current == NULL, 0))
-        init_system();
-
     flush_last_created();
 
     if (__builtin_expect(is_sched_empty(), 0))
@@ -359,10 +356,9 @@ int thread_join(thread_t thread, void **retval)
     thread_hot_t *t = (thread_hot_t *)thread;
     thread_cold_t *tc = THREAD_COLD(t);
 
-    if (__builtin_expect(t->state != FINISHED, 1))
+    if (__builtin_expect(tc->state != FINISHED, 1))
     {
         tc->waiting = current;
-        current->state = BLOCKED;
 
         thread_hot_t *next;
         if (__builtin_expect(last_created == t, 1))
@@ -380,7 +376,6 @@ int thread_join(thread_t thread, void **retval)
                 return -1;
         }
 
-        next->state = RUNNING;
         thread_hot_t *prev = current;
         current = next;
 
@@ -409,12 +404,11 @@ void thread_exit(void *retval)
 {
     thread_cold_t *cc = THREAD_COLD(current);
     cc->retval = retval;
-    current->state = FINISHED;
+    cc->state = FINISHED;
 
     if (__builtin_expect(cc->waiting != NULL, 1))
     {
         // Direct handoff : skip le scheduler, restore direct au waiter
-        cc->waiting->state = RUNNING;
         current = cc->waiting;
         VALGRIND_MAKE_MEM_DEFINED(cc->waiting->rsp, 7 * sizeof(void *));
         context_restore(cc->waiting->rsp);
@@ -428,7 +422,6 @@ void thread_exit(void *retval)
     }
 
     thread_hot_t *next = sched_dequeue_lifo();
-    next->state = RUNNING;
     current = next;
 
     VALGRIND_MAKE_MEM_DEFINED(next->rsp, 7 * sizeof(void *));

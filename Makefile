@@ -5,8 +5,10 @@ SCHED_CFLAGS_hybrid =
 VALGRIND_FLAG ?= -DNVALGRIND
 STACK_SIZE ?=
 STACK_FLAG = $(if $(STACK_SIZE),-DSTACK_SIZE=$(STACK_SIZE),)
+RING_BITS ?=
+RING_FLAG = $(if $(RING_BITS),-DRING_BITS=$(RING_BITS),)
 EXTRA_CFLAGS ?=
-CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL)) $(VALGRIND_FLAG) $(STACK_FLAG) $(EXTRA_CFLAGS)
+CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL)) $(VALGRIND_FLAG) $(STACK_FLAG) $(RING_FLAG) $(EXTRA_CFLAGS)
 
 # Implémentation de pool à utiliser :
 #   tab_pool            (tableau, défaut)
@@ -87,10 +89,17 @@ install: all pthreads
 	cp $(TEST_BINS) install/bin/
 	cp $(TEST_PTHREAD_BINS) install/bin/
 
+pgo: clean
+	$(MAKE) all EXTRA_CFLAGS="-fprofile-generate"
+	LD_LIBRARY_PATH=. ./scripts/run_tests.sh
+	$(MAKE) clean
+	$(MAKE) all EXTRA_CFLAGS="-fprofile-use -fprofile-correction"
+
 clean:
 	rm -f src/*.o $(LIB_NAME)
 	rm -f $(TEST_BINS) $(TEST_PTHREAD_BINS)
 	rm -f install/lib/* install/bin/*
 	rm -rf tests/*.dSYM
+	rm -f src/*.gcda src/*.gcno tests/*.gcda tests/*.gcno
 
-.PHONY: all debug clean valgrind check pthreads graphs install
+.PHONY: all debug clean valgrind check pthreads graphs install pgo
