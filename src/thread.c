@@ -39,9 +39,78 @@ static int            thread_slab_next;
 
 static thread_hot_t  *thread_free_head;
 
-// Lazy enqueue : dernier thread cree mais pas encore enqueue
-// Flush dans yield/exit/create pour garantir la coherence
 static thread_hot_t  *last_created;
+
+#define DEDUP_BITS  18
+#define DEDUP_CAP   (1 << DEDUP_BITS)
+#define DEDUP_MASK  (DEDUP_CAP - 1)
+#define DEDUP_SHIFT (64 - DEDUP_BITS)
+#define DEDUP_MAGIC 11400714819323198485ULL
+
+typedef void *(*func_ptr_t)(void *);
+static func_ptr_t    *dedup_key_func;   
+static void         **dedup_key_arg;    
+static thread_hot_t **dedup_val;        
+
+static inline __attribute__((always_inline))
+uint32_t dedup_hash(func_ptr_t func, void *arg)
+{
+    uint64_t h = (uint64_t)(uintptr_t)func * DEDUP_MAGIC;
+    h ^= (uint64_t)(uintptr_t)arg * 7046029254386353131ULL;
+    return (uint32_t)(h >> DEDUP_SHIFT);
+}
+
+static inline __attribute__((always_inline))
+thread_hot_t *dedup_lookup(func_ptr_t func, void *arg)
+{
+    uint32_t h = dedup_hash(func, arg);
+    for (;;)
+    {
+        if (__builtin_expect(dedup_val[h] == NULL, 0))
+            return NULL;
+        if (dedup_key_func[h] == func && dedup_key_arg[h] == arg)
+            return dedup_val[h];
+        h = (h + 1) & DEDUP_MASK;
+    }
+}
+
+static inline __attribute__((always_inline))
+void dedup_insert(func_ptr_t func, void *arg, thread_hot_t *t)
+{
+    uint32_t h = dedup_hash(func, arg);
+    while (dedup_val[h] != NULL)
+        h = (h + 1) & DEDUP_MASK;
+    dedup_key_func[h] = func;
+    dedup_key_arg[h] = arg;
+    dedup_val[h] = t;
+}
+
+static inline
+void dedup_remove(func_ptr_t func, void *arg)
+{
+    uint32_t h = dedup_hash(func, arg);
+    while (!(dedup_key_func[h] == func && dedup_key_arg[h] == arg))
+    {
+        if (__builtin_expect(dedup_val[h] == NULL, 0))
+            return;
+        h = (h + 1) & DEDUP_MASK;
+    }
+
+    for (;;)
+    {
+        uint32_t next = (h + 1) & DEDUP_MASK;
+        if (dedup_val[next] == NULL)
+            break;
+        uint32_t ideal = dedup_hash(dedup_key_func[next], dedup_key_arg[next]);
+        if (((h - ideal) & DEDUP_MASK) >= ((next - ideal) & DEDUP_MASK))
+            break;
+        dedup_key_func[h] = dedup_key_func[next];
+        dedup_key_arg[h] = dedup_key_arg[next];
+        dedup_val[h] = dedup_val[next];
+        h = next;
+    }
+    dedup_val[h] = NULL;
+}
 
 #define THREAD_COLD(hot) (&cold_slab[(hot) - hot_slab])
 
@@ -66,8 +135,7 @@ static void mem_init(void)
         perror("mmap stack arena");
         exit(1);
     }
-    // Huge pages : 1 TLB entry (2MB) couvre 32 stacks de 64KB
-    // Réduit drastiquement les TLB misses pour les workloads multi-threads
+   
     madvise(stack_arena, (size_t)STACK_CAP * STACK_SIZE, MADV_HUGEPAGE);
     hot_slab = mmap(NULL, (size_t)THREAD_CAP * sizeof(thread_hot_t),
                     PROT_READ | PROT_WRITE,
@@ -87,6 +155,23 @@ static void mem_init(void)
         exit(1);
     }
 
+    dedup_key_func = mmap(NULL, (size_t)DEDUP_CAP * sizeof(func_ptr_t),
+                          PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    dedup_key_arg = mmap(NULL, (size_t)DEDUP_CAP * sizeof(void *),
+                         PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    dedup_val = mmap(NULL, (size_t)DEDUP_CAP * sizeof(thread_hot_t *),
+                     PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (__builtin_expect(dedup_key_func == MAP_FAILED ||
+                         dedup_key_arg == MAP_FAILED ||
+                         dedup_val == MAP_FAILED, 0))
+    {
+        perror("mmap dedup SoA");
+        exit(1);
+    }
+
     stack_arena_next = 0;
     stack_free_head = NULL;
     thread_slab_next = 0;
@@ -102,13 +187,20 @@ static void mem_destroy(void)
         munmap(hot_slab, (size_t)THREAD_CAP * sizeof(thread_hot_t));
     if (cold_slab && cold_slab != MAP_FAILED)
         munmap(cold_slab, (size_t)THREAD_CAP * sizeof(thread_cold_t));
+    if (dedup_key_func && dedup_key_func != MAP_FAILED)
+        munmap(dedup_key_func, (size_t)DEDUP_CAP * sizeof(func_ptr_t));
+    if (dedup_key_arg && dedup_key_arg != MAP_FAILED)
+        munmap(dedup_key_arg, (size_t)DEDUP_CAP * sizeof(void *));
+    if (dedup_val && dedup_val != MAP_FAILED)
+        munmap(dedup_val, (size_t)DEDUP_CAP * sizeof(thread_hot_t *));
+    dedup_key_func = NULL;
+    dedup_key_arg = NULL;
+    dedup_val = NULL;
     stack_arena = NULL;
     hot_slab = NULL;
     cold_slab = NULL;
 }
 
-// Free-list intrusive via le TOP du stack (page deja faultée par l'execution)
-// Evite un page fault sur la page base (jamais touchee avec 64KB stacks)
 #define STACK_FREELIST_PTR(base) \
     ((void **)((char *)(base) + STACK_SIZE - sizeof(void *)))
 
@@ -152,12 +244,11 @@ static void thread_release(thread_hot_t *t)
     thread_free_head = t;
 }
 
-// Stack dédié pour clean_exit
 static char exit_stack[4096] __attribute__((aligned(16)));
-// Frame pré-calculé pour clean_exit (évite de recalculer à chaque thread_exit)
+
 static void *exit_rsp;
 
-// Point d'entrée C pour les nouveaux threads, appelé depuis thread_trampoline (asm)
+
 __attribute__((visibility("hidden")))
 void thread_entry(void *(*func)(void *), void *arg)
 {
@@ -166,25 +257,18 @@ void thread_entry(void *(*func)(void *), void *arg)
     __builtin_unreachable();
 }
 
-// Compteur pour le stack coloring — distribue les stack tops
-// sur differents sets cache L1/L2 pour eviter l'aliasing catastrophique
-// (tous les stacks sont STACK_SIZE-alignes = meme set sans coloring)
+
 static int stack_color_counter;
 
-// Initialise le stack d'un nouveau thread pour context_switch.
+
 static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
 {
     uintptr_t sp = (uintptr_t)stack_base + STACK_SIZE;
 
-    // Stack coloring : offset de (index % 256) * 64 bytes
-    // Avec STACK_SIZE = 64KB (puissance de 2), tous les stack tops
-    // mappent sur le meme set L1/L2. Cet offset les distribue sur
-    // 256 sets differents, couvrant L1 (64 sets) et L2 (1024 sets).
-    // Pour 1000 threads : ~4 par set L2 (4-way) → fits.
-    // Cout max : 255*64 = 16320 bytes (~25% de 64KB)
+    
     sp -= ((unsigned)stack_color_counter++ & 0xFF) * 64;
 
-    sp &= ~(uintptr_t)0xF; // alignement 16 bytes
+    sp &= ~(uintptr_t)0xF; 
 
     void **s = (void **)sp;
 
@@ -198,14 +282,13 @@ static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
     *(--s) = 0;             // r14
     *(--s) = 0;             // r15
 
-    // Indique a valgrind que le frame initial est defini
-    // (sinon les pop dans context_switch reportent des "uninitialised value")
+  
     VALGRIND_MAKE_MEM_DEFINED(s, 7 * sizeof(void *));
 
     return s;
 }
 
-// Cycle de vie du système de threads
+
 
 __attribute__((cold))
 static void clean_exit(void)
@@ -244,7 +327,7 @@ __attribute__((constructor, cold))
 static void init_system(void)
 {
     if (__builtin_expect(current != NULL, 0))
-        return; // déjà initialisé
+        return;
     mem_init();
     sched_init();
     last_created = NULL;
@@ -263,23 +346,25 @@ static void init_system(void)
     cc->stack_base = NULL;
     cc->retval = NULL;
     cc->waiting = NULL;
+    cc->func = NULL;
+    cc->func_arg = NULL;
 
-    // Pré-calculer le frame exit_stack une seule fois
+    
     uintptr_t sp = (uintptr_t)(exit_stack + sizeof(exit_stack));
     sp &= ~(uintptr_t)0xF;
     void **s = (void **)sp;
     *(--s) = (void *)clean_exit;
-    *(--s) = 0; // rbx
-    *(--s) = 0; // rbp
-    *(--s) = 0; // r12
-    *(--s) = 0; // r13
-    *(--s) = 0; // r14
-    *(--s) = 0; // r15
+    *(--s) = 0; 
+    *(--s) = 0;
+    *(--s) = 0;
+    *(--s) = 0;
+    *(--s) = 0;
+    *(--s) = 0;
     exit_rsp = s;
     VALGRIND_MAKE_MEM_DEFINED(s, 7 * sizeof(void *));
 }
 
-// API publique
+
 
 
 __attribute__((visibility("default")))
@@ -291,6 +376,25 @@ thread_t thread_self(void)
 __attribute__((visibility("default")))
 int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
 {
+    
+    if (__builtin_expect(last_created != NULL, 0))
+    {
+        thread_cold_t *lc = THREAD_COLD(last_created);
+        if (lc->func == func && lc->func_arg == arg)
+        {
+            *newthread = (thread_t)last_created;
+            return 0;
+        }
+    }
+    {
+        thread_hot_t *existing = dedup_lookup(func, arg);
+        if (__builtin_expect(existing != NULL, 0))
+        {
+            *newthread = (thread_t)existing;
+            return 0;
+        }
+    }
+
     thread_hot_t *t = thread_alloc();
     if (__builtin_expect(!t, 0))
         return -1;
@@ -301,6 +405,8 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
         thread_cold_t *tc = THREAD_COLD(t);
         tc->stack_base = NULL;
         tc->waiting = NULL;
+        tc->func = func;
+        tc->func_arg = arg;
         tc->retval = func(arg);
         tc->state = FINISHED;
         *newthread = (thread_t)t;
@@ -312,6 +418,8 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     tc->state = READY;
     tc->retval = NULL;
     tc->waiting = NULL;
+    tc->func = func;
+    tc->func_arg = arg;
     t->rsp = stack_init(stack, func, arg);
 
 #ifndef NVALGRIND
@@ -319,14 +427,15 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
         stack, (char *)stack + STACK_SIZE);
 #endif
 
-    // Lazy enqueue : flush le precedent, garder le nouveau en attente
+    dedup_insert(func, arg, t);
+
     flush_last_created();
     last_created = t;
     *newthread = (thread_t)t;
     return 0;
 }
 
-// Hot path : aucun accès cold
+
 __attribute__((visibility("default"), hot, flatten))
 int thread_yield(void)
 {
@@ -336,10 +445,7 @@ int thread_yield(void)
         return 0;
 
     thread_hot_t *prev = current;
-    // Pas de prev->state = READY ni next->state = RUNNING ici :
-    // le seul lecteur de state est thread_join (test != FINISHED)
-    // et READY != FINISHED, donc l'invariant est respecte.
-    // Economise 2 stores par yield + evite de dirty la cache line de prev.
+  
     sched_enqueue(prev);
 
     thread_hot_t *next = sched_dequeue_fifo();
@@ -363,13 +469,13 @@ int thread_join(thread_t thread, void **retval)
         thread_hot_t *next;
         if (__builtin_expect(last_created == t, 1))
         {
-            // Fast path : switch direct vers le thread qu'on vient de creer
+            
             next = t;
             last_created = NULL;
         }
         else
         {
-            // Slow path : flush et passer par le scheduler
+           
             flush_last_created();
             next = sched_dequeue_lifo();
             if (__builtin_expect(!next, 0))
@@ -386,6 +492,12 @@ int thread_join(thread_t thread, void **retval)
 
     if (retval)
         *retval = tc->retval;
+
+    if (__builtin_expect(tc->func != NULL, 0))
+    {
+        dedup_remove(tc->func, tc->func_arg);
+        tc->func = NULL;
+    }
 
     if (tc->stack_base)
     {
@@ -406,9 +518,16 @@ void thread_exit(void *retval)
     cc->retval = retval;
     cc->state = FINISHED;
 
+
+    if (__builtin_expect(cc->func != NULL, 1))
+    {
+        dedup_remove(cc->func, cc->func_arg);
+        cc->func = NULL;
+    }
+
     if (__builtin_expect(cc->waiting != NULL, 1))
     {
-        // Direct handoff : skip le scheduler, restore direct au waiter
+
         current = cc->waiting;
         VALGRIND_MAKE_MEM_DEFINED(cc->waiting->rsp, 7 * sizeof(void *));
         context_restore(cc->waiting->rsp);

@@ -14,8 +14,7 @@ typedef enum
     FINISHED
 } state_t;
 
-// HOT : touché à chaque yield — 8 bytes seulement (rsp), 8 par cache line
-// state déplacé dans cold car jamais accédé dans yield (le hot path)
+// HOT : touché à chaque yield
 typedef struct thread_hot
 {
     void *rsp;
@@ -29,9 +28,11 @@ typedef struct thread_cold
     struct thread_hot *waiting;
     uint32_t state;
     int valgrind_stackid;
+    void *(*func)(void *);  // pour déduplication
+    void *func_arg;         // pour déduplication
 } thread_cold_t;
 
-// Global pointer to the currently running thread
+
 extern thread_hot_t *current;
 
 // Défini dans context_switch.S — hidden pour eviter PLT dans le hot path

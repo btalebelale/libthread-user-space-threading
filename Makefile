@@ -1,26 +1,11 @@
 CC      = gcc
-SCHED_CFLAGS_fifo = -DSCHED_FIFO
-SCHED_CFLAGS_lifo = -DSCHED_LIFO
-SCHED_CFLAGS_hybrid =
 VALGRIND_FLAG ?=
 STACK_SIZE ?=
 STACK_FLAG = $(if $(STACK_SIZE),-DSTACK_SIZE=$(STACK_SIZE),)
 RING_BITS ?=
 RING_FLAG = $(if $(RING_BITS),-DRING_BITS=$(RING_BITS),)
 EXTRA_CFLAGS ?=
-CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL)) $(VALGRIND_FLAG) $(STACK_FLAG) $(RING_FLAG) $(EXTRA_CFLAGS)
-
-# Implémentation de pool à utiliser :
-#   tab_pool            (tableau, défaut)
-#   stailq_pool         (STAILQ + wrapper malloc par nœud)
-#   stailq_pool_prealloc (STAILQ + nœuds pré-alloués, zéro malloc après init)
-POOL_IMPL ?= ring_pool
-
-# Politique d'ordonnancement :
-#   hybrid (défaut) : yield=FIFO (équité) + join/exit=LIFO (DFS)
-#   fifo            : tout FIFO (BFS)
-#   lifo            : tout LIFO (DFS pur)
-SCHED_IMPL ?= hybrid
+CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src $(VALGRIND_FLAG) $(STACK_FLAG) $(RING_FLAG) $(EXTRA_CFLAGS)
 
 LIB_SRC_C = src/thread.c src/scheduler.c
 LIB_SRC_S = src/context_switch.S
@@ -43,18 +28,16 @@ TEST_BINS = tests/01-main \
             #tests/61-mutex \
             #tests/62-mutex \
             #tests/63-mutex-equity \
-            #tests/64-mutex-join 
-            #tests/71-preemption 
+            #tests/64-mutex-join \
+            #tests/71-preemption \
             #tests/81-deadlock
-
-
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
-all: $(LIB_NAME) $(TEST_BINS)
+BENCH_BINS = bench/bench_all
+BENCH_PTHREAD_BINS = $(addsuffix -pthread,$(BENCH_BINS))
 
-#debug: CFLAGS += -DDLOG
-#debug: all
+all: $(LIB_NAME) $(TEST_BINS)
 
 $(LIB_NAME): $(LIB_OBJ)
 	$(CC) $(CFLAGS) -shared -o $@ $^
@@ -64,9 +47,6 @@ src/%.o: src/%.c src/thread.h
 
 tests/%: tests/%.c $(LIB_NAME)
 	$(CC) $(CFLAGS) $< -o $@ -L. -lthread
-
-#tests/71-preemption: tests/71-preemption.c $(LIB_SRC)
-#	$(CC) $(CFLAGS) -DUSE_PREEMPTION $^ -o $@
 
 pthreads: $(TEST_PTHREAD_BINS)
 
@@ -89,6 +69,21 @@ install: all pthreads
 	cp $(TEST_BINS) install/bin/
 	cp $(TEST_PTHREAD_BINS) install/bin/
 
+bench/bench_all: bench/bench_all.c $(LIB_NAME)
+	$(CC) $(CFLAGS) $< -o $@ -L. -lthread
+
+bench/bench_all-pthread: bench/bench_all.c
+	$(CC) $(CFLAGS) -DUSE_PTHREAD $< -o $@ -lpthread
+
+bench: $(BENCH_BINS) $(BENCH_PTHREAD_BINS)
+	@echo "=== libthread ==="
+	LD_LIBRARY_PATH=. ./bench/bench_all 2>bench_thread.csv
+	@echo ""
+	@echo "=== pthread ==="
+	./bench/bench_all-pthread 2>bench_pthread.csv
+	@echo ""
+	@echo "Results saved: bench_thread.csv, bench_pthread.csv"
+
 pgo: clean
 	$(MAKE) all EXTRA_CFLAGS="-fprofile-generate"
 	LD_LIBRARY_PATH=. ./scripts/run_tests.sh
@@ -98,8 +93,9 @@ pgo: clean
 clean:
 	rm -f src/*.o $(LIB_NAME)
 	rm -f $(TEST_BINS) $(TEST_PTHREAD_BINS)
+	rm -f $(BENCH_BINS) $(BENCH_PTHREAD_BINS) bench_thread.csv bench_pthread.csv
 	rm -f install/lib/* install/bin/*
 	rm -rf tests/*.dSYM
 	rm -f src/*.gcda src/*.gcno tests/*.gcda tests/*.gcno
 
-.PHONY: all debug clean valgrind check pthreads graphs install pgo
+.PHONY: all clean valgrind check pthreads graphs install pgo bench
