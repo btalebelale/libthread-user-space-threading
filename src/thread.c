@@ -7,12 +7,20 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/mman.h>
+#ifndef NVALGRIND
 #include <valgrind/valgrind.h>
+#else
+#define VALGRIND_STACK_REGISTER(start, end) (0)
+#define VALGRIND_STACK_DEREGISTER(id) ((void)(id))
+#endif
 
-
+#ifndef STACK_SIZE
 #define STACK_SIZE  (64 * 1024)
+#endif
 
-#define STACK_CAP   16384
+// Nombre max de stacks dans l'arena
+// Ajuste automatiquement pour occuper ~1GB max d'espace virtuel
+#define STACK_CAP   (1073741824 / STACK_SIZE)
 
 #define THREAD_CAP  262144
 
@@ -29,8 +37,21 @@ static int            thread_slab_next;
 
 static thread_hot_t  *thread_free_head;
 
+// Lazy enqueue : dernier thread cree mais pas encore enqueue
+// Flush dans yield/exit/create pour garantir la coherence
+static thread_hot_t  *last_created;
 
 #define THREAD_COLD(hot) (&cold_slab[(hot) - hot_slab])
+
+static inline __attribute__((always_inline))
+void flush_last_created(void)
+{
+    if (__builtin_expect(last_created != NULL, 0))
+    {
+        sched_enqueue(last_created);
+        last_created = NULL;
+    }
+}
 
 __attribute__((cold))
 static void mem_init(void)
@@ -43,7 +64,6 @@ static void mem_init(void)
         perror("mmap stack arena");
         exit(1);
     }
-
     hot_slab = mmap(NULL, (size_t)THREAD_CAP * sizeof(thread_hot_t),
                     PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -82,12 +102,17 @@ static void mem_destroy(void)
     cold_slab = NULL;
 }
 
+// Free-list intrusive via le TOP du stack (page deja faultée par l'execution)
+// Evite un page fault sur la page base (jamais touchee avec 64KB stacks)
+#define STACK_FREELIST_PTR(base) \
+    ((void **)((char *)(base) + STACK_SIZE - sizeof(void *)))
+
 static void *stack_alloc(void)
 {
     if (__builtin_expect(stack_free_head != NULL, 1))
     {
         void *s = stack_free_head;
-        stack_free_head = *(void **)s;
+        stack_free_head = *STACK_FREELIST_PTR(s);
         return s;
     }
     if (__builtin_expect(stack_arena_next >= STACK_CAP, 0))
@@ -98,7 +123,7 @@ static void *stack_alloc(void)
 
 static void stack_release(void *s)
 {
-    *(void **)s = stack_free_head;
+    *STACK_FREELIST_PTR(s) = stack_free_head;
     stack_free_head = s;
 }
 
@@ -164,8 +189,11 @@ __attribute__((cold))
 static void clean_exit(void)
 {
     thread_cold_t *cc = THREAD_COLD(current);
-    if (cc->stack_base)
+    if (cc->stack_base) {
+#ifndef NVALGRIND
         VALGRIND_STACK_DEREGISTER(cc->valgrind_stackid);
+#endif
+    }
     current = NULL;
     sched_cleanup();
     mem_destroy();
@@ -179,8 +207,11 @@ static void thread_system_destroy(void)
     {
         thread_hot_t *t = sched_dequeue_fifo();
         thread_cold_t *tc = THREAD_COLD(t);
-        if (tc->stack_base)
+        if (tc->stack_base) {
+#ifndef NVALGRIND
             VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
+#endif
+        }
     }
     current = NULL;
     sched_cleanup();
@@ -192,6 +223,7 @@ static void init_system(void)
 {
     mem_init();
     sched_init();
+    last_created = NULL;
     atexit(thread_system_destroy);
 
     current = thread_alloc();
@@ -262,10 +294,14 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     tc->waiting = NULL;
     t->rsp = stack_init(stack, func, arg);
 
+#ifndef NVALGRIND
     tc->valgrind_stackid = VALGRIND_STACK_REGISTER(
         stack, (char *)stack + STACK_SIZE);
+#endif
 
-    sched_enqueue(t);
+    // Lazy enqueue : flush le precedent, garder le nouveau en attente
+    flush_last_created();
+    last_created = t;
     *newthread = (thread_t)t;
     return 0;
 }
@@ -276,6 +312,8 @@ int thread_yield(void)
 {
     if (__builtin_expect(current == NULL, 0))
         init_system();
+
+    flush_last_created();
 
     if (__builtin_expect(is_sched_empty(), 0))
         return 0;
@@ -304,9 +342,21 @@ int thread_join(thread_t thread, void **retval)
         tc->waiting = current;
         current->state = BLOCKED;
 
-        thread_hot_t *next = sched_dequeue_lifo();
-        if (__builtin_expect(!next, 0))
-            return -1;
+        thread_hot_t *next;
+        if (__builtin_expect(last_created == t, 1))
+        {
+            // Fast path : switch direct vers le thread qu'on vient de creer
+            next = t;
+            last_created = NULL;
+        }
+        else
+        {
+            // Slow path : flush et passer par le scheduler
+            flush_last_created();
+            next = sched_dequeue_lifo();
+            if (__builtin_expect(!next, 0))
+                return -1;
+        }
 
         next->state = RUNNING;
         thread_hot_t *prev = current;
@@ -321,7 +371,9 @@ int thread_join(thread_t thread, void **retval)
 
     if (tc->stack_base)
     {
+#ifndef NVALGRIND
         VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
+#endif
         stack_release(tc->stack_base);
     }
 
@@ -336,11 +388,15 @@ void thread_exit(void *retval)
     cc->retval = retval;
     current->state = FINISHED;
 
-    if (__builtin_expect(cc->waiting != NULL, 0))
+    if (__builtin_expect(cc->waiting != NULL, 1))
     {
-        cc->waiting->state = READY;
-        sched_enqueue(cc->waiting);
+        // Direct handoff : skip le scheduler, restore direct au waiter
+        cc->waiting->state = RUNNING;
+        current = cc->waiting;
+        context_restore(cc->waiting->rsp);
     }
+
+    flush_last_created();
 
     if (__builtin_expect(is_sched_empty(), 0))
         context_restore(exit_rsp);

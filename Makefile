@@ -2,7 +2,10 @@ CC      = gcc
 SCHED_CFLAGS_fifo = -DSCHED_FIFO
 SCHED_CFLAGS_lifo = -DSCHED_LIFO
 SCHED_CFLAGS_hybrid =
-CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL))
+VALGRIND_FLAG ?= -DNVALGRIND
+STACK_SIZE ?=
+STACK_FLAG = $(if $(STACK_SIZE),-DSTACK_SIZE=$(STACK_SIZE),)
+CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL)) $(VALGRIND_FLAG) $(STACK_FLAG)
 
 # Implémentation de pool à utiliser :
 #   tab_pool            (tableau, défaut)
@@ -71,7 +74,7 @@ check: all
 	LD_LIBRARY_PATH=. ./scripts/run_tests.sh
 
 valgrind: clean
-	$(MAKE) all CFLAGS="$(CFLAGS) -mno-avx512f"
+	$(MAKE) all VALGRIND_FLAG= CFLAGS="$(CFLAGS) -mno-avx512f"
 	LD_LIBRARY_PATH=. ./scripts/run_valgrind.sh
 
 graphs: all pthreads
