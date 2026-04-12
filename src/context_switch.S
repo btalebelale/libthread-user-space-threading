@@ -4,8 +4,10 @@
 .hidden thread_entry
 
 // void context_switch(void **old_rsp, void *new_rsp)
+// .hidden evite le passage par PLT (meme shared library)
 
 .globl context_switch
+.hidden context_switch
 .type context_switch, @function
 context_switch:
     pushq %rbx
@@ -28,6 +30,7 @@ context_switch:
 // void context_restore(void *new_rsp) __attribute__((noreturn))
 
 .globl context_restore
+.hidden context_restore
 .type context_restore, @function
 context_restore:
     movq  %rdi, %rsp        // rsp = new_rsp
@@ -45,6 +48,7 @@ context_restore:
 //   r12 = func, r13 = arg (placés lors de l'initialisation du stack)
 // Appelle thread_entry(func, arg) qui ne retourne jamais.
 .globl thread_trampoline
+.hidden thread_trampoline
 .type thread_trampoline, @function
 thread_trampoline:
     movq  %r12, %rdi         // arg1 = func

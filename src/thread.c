@@ -9,9 +9,11 @@
 #include <sys/mman.h>
 #ifndef NVALGRIND
 #include <valgrind/valgrind.h>
+#include <valgrind/memcheck.h>
 #else
 #define VALGRIND_STACK_REGISTER(start, end) (0)
 #define VALGRIND_STACK_DEREGISTER(id) ((void)(id))
+#define VALGRIND_MAKE_MEM_DEFINED(addr, len) ((void)0)
 #endif
 
 #ifndef STACK_SIZE
@@ -161,10 +163,24 @@ void thread_entry(void *(*func)(void *), void *arg)
     __builtin_unreachable();
 }
 
+// Compteur pour le stack coloring — distribue les stack tops
+// sur differents sets cache L1/L2 pour eviter l'aliasing catastrophique
+// (tous les stacks sont STACK_SIZE-alignes = meme set sans coloring)
+static int stack_color_counter;
+
 // Initialise le stack d'un nouveau thread pour context_switch.
 static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
 {
     uintptr_t sp = (uintptr_t)stack_base + STACK_SIZE;
+
+    // Stack coloring : offset de (index % 256) * 64 bytes
+    // Avec STACK_SIZE = 64KB (puissance de 2), tous les stack tops
+    // mappent sur le meme set L1/L2. Cet offset les distribue sur
+    // 256 sets differents, couvrant L1 (64 sets) et L2 (1024 sets).
+    // Pour 1000 threads : ~4 par set L2 (4-way) → fits.
+    // Cout max : 255*64 = 16320 bytes (~25% de 64KB)
+    sp -= ((unsigned)stack_color_counter++ & 0xFF) * 64;
+
     sp &= ~(uintptr_t)0xF; // alignement 16 bytes
 
     void **s = (void **)sp;
@@ -172,13 +188,16 @@ static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
     // Adresse de retour pour context_switch → ret → thread_trampoline
     *(--s) = (void *)thread_trampoline;
 
-   
     *(--s) = 0;             // rbx
     *(--s) = 0;             // rbp
     *(--s) = (void *)func;  // r12 = func
     *(--s) = arg;           // r13 = arg
     *(--s) = 0;             // r14
     *(--s) = 0;             // r15
+
+    // Indique a valgrind que le frame initial est defini
+    // (sinon les pop dans context_switch reportent des "uninitialised value")
+    VALGRIND_MAKE_MEM_DEFINED(s, 7 * sizeof(void *));
 
     return s;
 }
@@ -252,6 +271,7 @@ static void init_system(void)
     *(--s) = 0; // r14
     *(--s) = 0; // r15
     exit_rsp = s;
+    VALGRIND_MAKE_MEM_DEFINED(s, 7 * sizeof(void *));
 }
 
 // API publique
@@ -319,14 +339,16 @@ int thread_yield(void)
         return 0;
 
     thread_hot_t *prev = current;
-    prev->state = READY;
+    // Pas de prev->state = READY ni next->state = RUNNING ici :
+    // le seul lecteur de state est thread_join (test != FINISHED)
+    // et READY != FINISHED, donc l'invariant est respecte.
+    // Economise 2 stores par yield + evite de dirty la cache line de prev.
     sched_enqueue(prev);
 
     thread_hot_t *next = sched_dequeue_fifo();
-    next->state = RUNNING;
     current = next;
 
-    __builtin_prefetch(next->rsp, 0, 3);
+    VALGRIND_MAKE_MEM_DEFINED(next->rsp, 7 * sizeof(void *));
     context_switch(&prev->rsp, next->rsp);
     return 0;
 }
@@ -363,6 +385,7 @@ int thread_join(thread_t thread, void **retval)
         current = next;
 
         __builtin_prefetch(next->rsp, 0, 3);
+        VALGRIND_MAKE_MEM_DEFINED(next->rsp, 7 * sizeof(void *));
         context_switch(&prev->rsp, next->rsp);
     }
 
@@ -393,18 +416,22 @@ void thread_exit(void *retval)
         // Direct handoff : skip le scheduler, restore direct au waiter
         cc->waiting->state = RUNNING;
         current = cc->waiting;
+        VALGRIND_MAKE_MEM_DEFINED(cc->waiting->rsp, 7 * sizeof(void *));
         context_restore(cc->waiting->rsp);
     }
 
     flush_last_created();
 
-    if (__builtin_expect(is_sched_empty(), 0))
+    if (__builtin_expect(is_sched_empty(), 0)) {
+        VALGRIND_MAKE_MEM_DEFINED(exit_rsp, 7 * sizeof(void *));
         context_restore(exit_rsp);
+    }
 
     thread_hot_t *next = sched_dequeue_lifo();
     next->state = RUNNING;
     current = next;
 
+    VALGRIND_MAKE_MEM_DEFINED(next->rsp, 7 * sizeof(void *));
     context_restore(next->rsp);
 }
 

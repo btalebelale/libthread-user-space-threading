@@ -1,20 +1,18 @@
 #include "scheduler.h"
 
-#define SCHED_MAX_THREADS (16384 * 4)
-
-pool *ready_queue = NULL;
 thread_hot_t *current = NULL;
+
+// Ring buffer statique — definitions uniques (declarees extern dans ring_pool.h)
+thread_hot_t *ring_data[RING_CAP] __attribute__((aligned(64)));
+unsigned ring_head __attribute__((aligned(64)));
+unsigned ring_tail __attribute__((aligned(64)));
 
 void sched_init(void)
 {
-    ready_queue = pool_init(SCHED_MAX_THREADS);
+    ring_init();
 }
 
 void sched_cleanup(void)
 {
-    if (ready_queue)
-    {
-        pool_free(ready_queue);
-        ready_queue = NULL;
-    }
+    // Ring buffer statique — rien a liberer
 }

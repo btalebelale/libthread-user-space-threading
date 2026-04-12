@@ -1,13 +1,11 @@
 #ifndef __RING_POOL_H__
 #define __RING_POOL_H__
 
-// Ring buffer FIFO inliné pour le scheduler hot path.
-// Invariant : cap est toujours une puissance de 2.
-
+// Ring buffer FIFO statique pour le scheduler hot path.
+// Pas d'allocation heap, pas d'indirection pointeur.
+// Le compilateur connait les adresses a la compilation → meilleur codegen.
 
 #include "thread_internal.h"
-#include <stdlib.h>
-#include <string.h>
 #include <assert.h>
 
 #ifdef NDEBUG
@@ -16,78 +14,54 @@
 #define DBG_ASSERT(expr) assert(expr)
 #endif
 
-struct pool {
-    thread_hot_t **data;
-    unsigned head;
-    unsigned tail;
-    unsigned mask;
-} __attribute__((aligned(64)));
+// Capacite fixe, puissance de 2
+#define RING_CAP    (1 << 16)
+#define RING_MASK   (RING_CAP - 1)
 
-typedef struct pool pool;
+// Definis dans scheduler.c — une seule instance partagee
+extern thread_hot_t *ring_data[];
+extern unsigned ring_head;
+extern unsigned ring_tail;
 
-static inline unsigned next_pow2(unsigned v) {
-    v--;
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    return v + 1;
-}
-
-__attribute__((cold))
-static inline pool *pool_init(int cap) {
-    if (__builtin_expect(cap <= 0, 0))
-        return NULL;
-    pool *p = aligned_alloc(64, sizeof(*p));
-    if (__builtin_expect(p == NULL, 0))
-        return NULL;
-    unsigned real_cap = next_pow2((unsigned)cap);
-    p->data = malloc(sizeof(thread_hot_t *) * real_cap);
-    if (__builtin_expect(p->data == NULL, 0)) {
-        free(p);
-        return NULL;
-    }
-    p->head = 0;
-    p->tail = 0;
-    p->mask = real_cap - 1;
-    return p;
-}
-
-__attribute__((cold))
-static inline void pool_free(pool *p) {
-    free(p->data);
-    free(p);
+static inline __attribute__((always_inline))
+void ring_init(void)
+{
+    ring_head = 0;
+    ring_tail = 0;
 }
 
 static inline __attribute__((always_inline))
-int is_pool_empty(pool *p) {
-    if (__builtin_expect(p == NULL, 0))
-        return 1;
-    return p->head == p->tail;
+int ring_empty(void)
+{
+    return ring_head == ring_tail;
 }
 
 static inline __attribute__((always_inline))
-int pool_put_last(pool *p, thread_hot_t *th) {
-    DBG_ASSERT((p->tail - p->head) <= p->mask);
-    p->data[p->tail & p->mask] = th;
-    p->tail++;
-    return 0;
+void ring_put_last(thread_hot_t *th)
+{
+    DBG_ASSERT((ring_tail - ring_head) <= RING_MASK);
+    ring_data[ring_tail & RING_MASK] = th;
+    ring_tail++;
 }
 
 static inline __attribute__((always_inline))
-thread_hot_t *pool_remove_first(pool *p) {
-    thread_hot_t *th = p->data[p->head & p->mask];
-    p->head++;
-    __builtin_prefetch(&p->data[p->head & p->mask], 0, 3);
+thread_hot_t *ring_remove_first(void)
+{
+    thread_hot_t *th = ring_data[ring_head & RING_MASK];
+    ring_head++;
+    // Prefetch le thread d'apres : donne 1 cycle complet de yield
+    // pour que le prefetch atteigne L1 (vs juste avant context_switch = trop tard)
+    thread_hot_t *peek = ring_data[ring_head & RING_MASK];
+    if (__builtin_expect(peek != NULL, 1))
+        __builtin_prefetch(peek->rsp, 0, 3);
     return th;
 }
 
-
 static inline __attribute__((always_inline))
-thread_hot_t *pool_remove_last(pool *p) {
-    p->tail--;
-    return p->data[p->tail & p->mask];
+thread_hot_t *ring_remove_last(void)
+{
+    ring_tail--;
+    return ring_data[ring_tail & RING_MASK];
 }
 
 #endif /* __RING_POOL_H__ */

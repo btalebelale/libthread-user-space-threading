@@ -5,7 +5,8 @@ SCHED_CFLAGS_hybrid =
 VALGRIND_FLAG ?= -DNVALGRIND
 STACK_SIZE ?=
 STACK_FLAG = $(if $(STACK_SIZE),-DSTACK_SIZE=$(STACK_SIZE),)
-CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL)) $(VALGRIND_FLAG) $(STACK_FLAG)
+EXTRA_CFLAGS ?=
+CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -I./src -I./debug $(SCHED_CFLAGS_$(SCHED_IMPL)) $(VALGRIND_FLAG) $(STACK_FLAG) $(EXTRA_CFLAGS)
 
 # Implémentation de pool à utiliser :
 #   tab_pool            (tableau, défaut)
@@ -54,7 +55,7 @@ all: $(LIB_NAME) $(TEST_BINS)
 #debug: all
 
 $(LIB_NAME): $(LIB_OBJ)
-	$(CC) -shared -o $@ $^
+	$(CC) $(CFLAGS) -shared -o $@ $^
 
 src/%.o: src/%.c src/thread.h
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -74,7 +75,7 @@ check: all
 	LD_LIBRARY_PATH=. ./scripts/run_tests.sh
 
 valgrind: clean
-	$(MAKE) all VALGRIND_FLAG= CFLAGS="$(CFLAGS) -mno-avx512f"
+	$(MAKE) all VALGRIND_FLAG= EXTRA_CFLAGS="-mno-avx512f"
 	LD_LIBRARY_PATH=. ./scripts/run_valgrind.sh
 
 graphs: all pthreads
