@@ -2,7 +2,7 @@ CC      = gcc
 SCHED_CFLAGS_fifo = -DSCHED_FIFO
 SCHED_CFLAGS_lifo = -DSCHED_LIFO
 SCHED_CFLAGS_hybrid =
-VALGRIND_FLAG ?= -DNVALGRIND
+VALGRIND_FLAG ?=
 STACK_SIZE ?=
 STACK_FLAG = $(if $(STACK_SIZE),-DSTACK_SIZE=$(STACK_SIZE),)
 RING_BITS ?=
@@ -77,7 +77,7 @@ check: all
 	LD_LIBRARY_PATH=. ./scripts/run_tests.sh
 
 valgrind: clean
-	$(MAKE) all VALGRIND_FLAG= EXTRA_CFLAGS="-mno-avx512f"
+	$(MAKE) all EXTRA_CFLAGS="-mno-avx512f"
 	LD_LIBRARY_PATH=. ./scripts/run_valgrind.sh
 
 graphs: all pthreads
