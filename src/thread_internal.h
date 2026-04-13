@@ -2,8 +2,8 @@
 #define __THREAD_INTERNAL_H__
 
 #include "thread.h"
-#include <stdlib.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 // Thread states
 typedef enum
@@ -28,19 +28,15 @@ typedef struct thread_cold
     struct thread_hot *waiting;
     uint32_t state;
     int valgrind_stackid;
-    void *(*func)(void *);  // pour déduplication
-    void *func_arg;         // pour déduplication
+    void *(*func)(void *); // pour déduplication
+    void *func_arg;        // pour déduplication
 } thread_cold_t;
-
 
 extern thread_hot_t *current;
 
 // Défini dans context_switch.S — hidden pour eviter PLT dans le hot path
-__attribute__((visibility("hidden")))
-extern void context_switch(void **old_rsp, void *new_rsp);
-__attribute__((visibility("hidden"), __noreturn__))
-extern void context_restore(void *new_rsp);
-__attribute__((visibility("hidden")))
-extern void thread_trampoline(void);
+__attribute__((visibility("hidden"))) extern void context_switch(void **old_rsp, void *new_rsp);
+__attribute__((visibility("hidden"), __noreturn__)) extern void context_restore(void *new_rsp);
+__attribute__((visibility("hidden"))) extern void thread_trampoline(void);
 
 #endif

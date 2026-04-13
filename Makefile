@@ -43,9 +43,11 @@ $(LIB_NAME): $(LIB_OBJ)
 	$(CC) $(CFLAGS) -shared -o $@ $^
 
 src/%.o: src/%.c src/thread.h
+	clang-format -i $<
 	$(CC) $(CFLAGS) -c $< -o $@
 
 tests/%: tests/%.c $(LIB_NAME)
+	clang-format -i $<
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable $< -o $@ -L. -lthread
 
 pthreads: $(TEST_PTHREAD_BINS)
@@ -93,9 +95,12 @@ pgo: clean
 clean:
 	rm -f src/*.o $(LIB_NAME)
 	rm -f $(TEST_BINS) $(TEST_PTHREAD_BINS)
-	rm -f $(BENCH_BINS) $(BENCH_PTHREAD_BINS) bench_thread.csv bench_pthread.csv
-	rm -f install/lib/* install/bin/*
+	rm -f $(BENCH_BINS) $(BENCH_PTHREAD_BINS)
+	rm -f bench_thread.csv bench_pthread.csv bench_aos.csv bench_soa.csv bench_swiss.csv
+	rm -rf install/lib/* install/bin/*
 	rm -rf tests/*.dSYM
 	rm -f src/*.gcda src/*.gcno tests/*.gcda tests/*.gcno
+	rm -f graphs/*.png
+	rm -f perf.data perf.data.old
 
 .PHONY: all clean valgrind check pthreads graphs install pgo bench
