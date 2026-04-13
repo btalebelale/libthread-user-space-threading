@@ -7,22 +7,22 @@ RING_BITS=${1:-17}
 echo ">>> Build SoA (current)..."
 make clean -s
 make RING_BITS=$RING_BITS -s
-gcc -Ofast -flto -march=native -mtune=native -I./src bench/bench_dedup_table.c -o bench/bench_soa -L. -lthread
+gcc -Ofast -flto -march=native -mtune=native -I./src scripts/bench_dedup_table.c -o scripts/bench_soa -L. -lthread
 cp libthread.so libthread_soa.so
 
 echo ">>> Build Swiss Table..."
 make clean -s
 make RING_BITS=$RING_BITS EXTRA_CFLAGS="-DDEDUP_SWISS" -s
-gcc -Ofast -flto -march=native -mtune=native -DDEDUP_SWISS -I./src bench/bench_dedup_table.c -o bench/bench_swiss -L. -lthread
+gcc -Ofast -flto -march=native -mtune=native -DDEDUP_SWISS -I./src scripts/bench_dedup_table.c -o scripts/bench_swiss -L. -lthread
 cp libthread.so libthread_swiss.so
 
 echo ">>> Run SoA..."
 cp libthread_soa.so libthread.so
-LD_LIBRARY_PATH=. ./bench/bench_soa 2>bench_soa.csv
+LD_LIBRARY_PATH=. ./scripts/bench_soa 2>bench_soa.csv
 
 echo ">>> Run Swiss..."
 cp libthread_swiss.so libthread.so
-LD_LIBRARY_PATH=. ./bench/bench_swiss 2>bench_swiss.csv
+LD_LIBRARY_PATH=. ./scripts/bench_swiss 2>bench_swiss.csv
 
 echo ""
 paste -d',' bench_soa.csv bench_swiss.csv | awk -F',' '
@@ -66,5 +66,5 @@ END {
 }'
 
 # Cleanup
-rm -f libthread_soa.so libthread_swiss.so bench/bench_soa bench/bench_swiss
+rm -f libthread_soa.so libthread_swiss.so scripts/bench_soa scripts/bench_swiss
 make clean -s && make -s

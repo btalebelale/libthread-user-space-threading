@@ -26,7 +26,6 @@
 #define STACK_SIZE (64 * 1024)
 #endif
 
-
 #define STACK_CAP (1073741824 / STACK_SIZE)
 
 #define THREAD_CAP 262144
@@ -52,7 +51,7 @@ typedef void *(*func_ptr_t)(void *);
 
 #ifdef DEDUP_SWISS
 
-//Swiss Table
+// Swiss Table
 
 #define SWISS_GROUP_SIZE 16
 #define SWISS_GROUPS (DEDUP_CAP / SWISS_GROUP_SIZE)
@@ -66,7 +65,6 @@ static func_ptr_t *swiss_key_func;
 static void **swiss_key_arg;
 static thread_hot_t **swiss_val;
 
-/* Hash : 64 bits complets */
 static inline __attribute__((always_inline)) uint64_t dedup_hash_full(func_ptr_t func, void *arg)
 {
     uint64_t h = (uint64_t)(uintptr_t)func * DEDUP_MAGIC;
@@ -74,23 +72,22 @@ static inline __attribute__((always_inline)) uint64_t dedup_hash_full(func_ptr_t
     return h;
 }
 
-/* Bits 63..50 → group index (14 bits) */
 static inline __attribute__((always_inline)) uint32_t swiss_group_index(uint64_t h)
 {
     return (uint32_t)(h >> 50) & SWISS_GROUP_MASK;
 }
 
-/* Bits 49..43 → 7-bit tag (MSB always 0 → occupied) */
 static inline __attribute__((always_inline)) int8_t swiss_tag(uint64_t h)
 {
     return (int8_t)((h >> 43) & 0x7F);
 }
 
-/* ── SSE2 group primitives (scalar fallback) ────────────────────────── */
+/
 
 #ifdef __SSE2__
 
-static inline __attribute__((always_inline)) uint32_t swiss_match(const int8_t *ctrl, int8_t tag)
+    static inline __attribute__((always_inline)) uint32_t swiss_match(const int8_t *ctrl,
+                                                                      int8_t tag)
 {
     __m128i group = _mm_load_si128((const __m128i *)ctrl);
     __m128i cmp = _mm_cmpeq_epi8(group, _mm_set1_epi8(tag));
@@ -111,9 +108,10 @@ swiss_match_empty_or_deleted(const int8_t *ctrl)
     return (uint32_t)_mm_movemask_epi8(group);
 }
 
-#else /* scalar fallback */
+#else
 
-static inline __attribute__((always_inline)) uint32_t swiss_match(const int8_t *ctrl, int8_t tag)
+    static inline __attribute__((always_inline)) uint32_t swiss_match(const int8_t *ctrl,
+                                                                      int8_t tag)
 {
     uint32_t mask = 0;
     for (int i = 0; i < 16; i++)
@@ -143,8 +141,6 @@ swiss_match_empty_or_deleted(const int8_t *ctrl)
 
 #endif /* __SSE2__ */
 
-//Probe helpers
-
 typedef struct
 {
     uint32_t group;
@@ -161,8 +157,6 @@ static inline __attribute__((always_inline)) void swiss_probe_next(swiss_probe_t
     p->stride++;
     p->group = (p->group + p->stride) & SWISS_GROUP_MASK;
 }
-
-// dedup operations
 
 static inline __attribute__((always_inline)) thread_hot_t *dedup_lookup(func_ptr_t func, void *arg)
 {
@@ -253,7 +247,7 @@ static inline void dedup_remove(func_ptr_t func, void *arg)
     }
 }
 
-#else /* !DEDUP_SWISS — linear probing SoA (original) */
+#else
 
 #define DEDUP_MASK (DEDUP_CAP - 1)
 #define DEDUP_SHIFT (64 - DEDUP_BITS)
