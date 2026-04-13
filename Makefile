@@ -51,7 +51,7 @@ tests/%: tests/%.c $(LIB_NAME)
 pthreads: $(TEST_PTHREAD_BINS)
 
 tests/%-pthread: tests/%.c
-	$(CC) $(CFLAGS) -DUSE_PTHREAD $< -o $@ -lpthread
+	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PTHREAD $< -o $@ -lpthread
 
 check: all
 	LD_LIBRARY_PATH=. ./scripts/run_tests.sh
