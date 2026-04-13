@@ -449,7 +449,6 @@ int thread_yield(void)
     thread_hot_t *next = sched_dequeue_fifo();
     current = next;
 
-    VALGRIND_MAKE_MEM_DEFINED(next->rsp, 7 * sizeof(void *));
     context_switch(&prev->rsp, next->rsp);
     return 0;
 }
@@ -484,14 +483,13 @@ int thread_join(thread_t thread, void **retval)
         current = next;
 
         __builtin_prefetch(next->rsp, 0, 3);
-        VALGRIND_MAKE_MEM_DEFINED(next->rsp, 7 * sizeof(void *));
         context_switch(&prev->rsp, next->rsp);
     }
 
     if (retval)
         *retval = tc->retval;
 
-    if (__builtin_expect(tc->func != NULL, 0))
+    if (__builtin_expect(tc->func != NULL, 1))
     {
         dedup_remove(tc->func, tc->func_arg);
         tc->func = NULL;
@@ -516,7 +514,6 @@ void thread_exit(void *retval)
     cc->retval = retval;
     cc->state = FINISHED;
 
-
     if (__builtin_expect(cc->func != NULL, 1))
     {
         dedup_remove(cc->func, cc->func_arg);
@@ -525,23 +522,18 @@ void thread_exit(void *retval)
 
     if (__builtin_expect(cc->waiting != NULL, 1))
     {
-
         current = cc->waiting;
-        VALGRIND_MAKE_MEM_DEFINED(cc->waiting->rsp, 7 * sizeof(void *));
         context_restore(cc->waiting->rsp);
     }
 
     flush_last_created();
 
-    if (__builtin_expect(is_sched_empty(), 0)) {
-        VALGRIND_MAKE_MEM_DEFINED(exit_rsp, 7 * sizeof(void *));
+    if (__builtin_expect(is_sched_empty(), 0))
         context_restore(exit_rsp);
-    }
 
     thread_hot_t *next = sched_dequeue_lifo();
     current = next;
 
-    VALGRIND_MAKE_MEM_DEFINED(next->rsp, 7 * sizeof(void *));
     context_restore(next->rsp);
 }
 
