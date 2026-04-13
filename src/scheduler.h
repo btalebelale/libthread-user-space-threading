@@ -24,6 +24,6 @@ static inline int is_sched_empty(void) {
 
 // Cold path : init et cleanup
 void sched_init(void);
-void sched_cleanup(void);
+
 
 #endif

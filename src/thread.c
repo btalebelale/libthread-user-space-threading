@@ -300,7 +300,6 @@ static void clean_exit(void)
 #endif
     }
     current = NULL;
-    sched_cleanup();
     mem_destroy();
     exit(0);
 }
@@ -319,7 +318,6 @@ static void thread_system_destroy(void)
         }
     }
     current = NULL;
-    sched_cleanup();
     mem_destroy();
 }
 
