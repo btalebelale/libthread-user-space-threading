@@ -43,18 +43,15 @@ context_restore:
     retq
 .size context_restore, .-context_restore
 
-// Point d'entrée pour les nouveaux threads.
-// Après context_switch → ret, on arrive ici avec :
-//   r12 = func, r13 = arg (placés lors de l'initialisation du stack)
-// Appelle thread_entry(func, arg) qui ne retourne jamais.
+
 .globl thread_trampoline
 .hidden thread_trampoline
 .type thread_trampoline, @function
 thread_trampoline:
-    movq  %r12, %rdi         // arg1 = func
-    movq  %r13, %rsi         // arg2 = arg
+    movq  %r12, %rdi       
+    movq  %r13, %rsi         
     call  thread_entry
-    ud2                       // unreachable
+    ud2                       
 .size thread_trampoline, .-thread_trampoline
 
 // Marque le stack comme non-exécutable (évite le warning linker)

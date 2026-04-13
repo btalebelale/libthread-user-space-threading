@@ -26,8 +26,7 @@
 #define STACK_SIZE (64 * 1024)
 #endif
 
-// Nombre max de stacks dans l'arena
-// Ajuste automatiquement pour occuper ~1GB max d'espace virtuel
+
 #define STACK_CAP (1073741824 / STACK_SIZE)
 
 #define THREAD_CAP 262144
@@ -53,7 +52,7 @@ typedef void *(*func_ptr_t)(void *);
 
 #ifdef DEDUP_SWISS
 
-/* ── Swiss Table ────────────────────────────────────────────────────── */
+//Swiss Table
 
 #define SWISS_GROUP_SIZE 16
 #define SWISS_GROUPS (DEDUP_CAP / SWISS_GROUP_SIZE)
@@ -144,7 +143,7 @@ swiss_match_empty_or_deleted(const int8_t *ctrl)
 
 #endif /* __SSE2__ */
 
-/* ── Probe helpers ──────────────────────────────────────────────────── */
+//Probe helpers
 
 typedef struct
 {
@@ -163,7 +162,7 @@ static inline __attribute__((always_inline)) void swiss_probe_next(swiss_probe_t
     p->group = (p->group + p->stride) & SWISS_GROUP_MASK;
 }
 
-/* ── dedup operations ───────────────────────────────────────────────── */
+// dedup operations
 
 static inline __attribute__((always_inline)) thread_hot_t *dedup_lookup(func_ptr_t func, void *arg)
 {

@@ -34,7 +34,6 @@ typedef struct thread_cold
 
 extern thread_hot_t *current;
 
-// Défini dans context_switch.S — hidden pour eviter PLT dans le hot path
 __attribute__((visibility("hidden"))) extern void context_switch(void **old_rsp, void *new_rsp);
 __attribute__((visibility("hidden"), __noreturn__)) extern void context_restore(void *new_rsp);
 __attribute__((visibility("hidden"))) extern void thread_trampoline(void);
