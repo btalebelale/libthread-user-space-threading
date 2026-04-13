@@ -22,3 +22,5 @@ install/lib/*
 
 *.csv
 *.png
+
+profile_results/
