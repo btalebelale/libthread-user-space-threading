@@ -2,6 +2,7 @@
 #define __THREAD_INTERNAL_H__
 
 #include "thread.h"
+#include <setjmp.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -30,6 +31,7 @@ typedef struct thread_cold
     int valgrind_stackid;
     void *(*func)(void *); // pour déduplication
     void *func_arg;        // pour déduplication
+    jmp_buf *inline_jmpbuf;
 } thread_cold_t;
 
 extern thread_hot_t *current;

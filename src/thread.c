@@ -36,18 +36,51 @@ static int thread_slab_next;
 static thread_hot_t *thread_free_head;
 
 static thread_hot_t *last_created;
+static void *(*last_created_func)(void *);
+static void *last_created_arg;
 
 #include "dedup.h"
 
 #define THREAD_COLD(hot) (&cold_slab[(hot) - hot_slab])
 
+static void *stack_alloc(void);
+static void stack_release(void *s);
+static void *stack_init(void *stack_base, void *(*func)(void *), void *arg);
+
+static __attribute__((noinline, cold)) void flush_last_created_slow(void)
+{
+    thread_cold_t *lc = THREAD_COLD(last_created);
+
+    if (__builtin_expect(last_created->rsp == NULL, 1))
+    {
+        void *stack = stack_alloc();
+        if (__builtin_expect(!stack, 0))
+        {
+            lc->retval = last_created_func(last_created_arg);
+            lc->state = FINISHED;
+            lc->func = NULL;
+            lc->func_arg = NULL;
+            last_created = NULL;
+            return;
+        }
+        lc->stack_base = stack;
+        last_created->rsp = stack_init(stack, last_created_func, last_created_arg);
+#ifndef NVALGRIND
+        lc->valgrind_stackid = VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
+#endif
+    }
+
+    lc->func = last_created_func;
+    lc->func_arg = last_created_arg;
+    dedup_insert(last_created_func, last_created_arg, last_created);
+    sched_enqueue(last_created);
+    last_created = NULL;
+}
+
 static inline __attribute__((always_inline)) void flush_last_created(void)
 {
     if (__builtin_expect(last_created != NULL, 0))
-    {
-        sched_enqueue(last_created);
-        last_created = NULL;
-    }
+        flush_last_created_slow();
 }
 
 __attribute__((cold)) static void mem_init(void)
@@ -234,6 +267,7 @@ __attribute__((constructor, cold)) static void init_system(void)
     cc->waiting = NULL;
     cc->func = NULL;
     cc->func_arg = NULL;
+    cc->inline_jmpbuf = NULL;
 
     uintptr_t sp = (uintptr_t)(exit_stack + sizeof(exit_stack));
     sp &= ~(uintptr_t)0xF;
@@ -260,8 +294,7 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
 
     if (__builtin_expect(last_created != NULL, 0))
     {
-        thread_cold_t *lc = THREAD_COLD(last_created);
-        if (lc->func == func && lc->func_arg == arg)
+        if (last_created_func == func && last_created_arg == arg)
         {
             *newthread = (thread_t)last_created;
             return 0;
@@ -280,37 +313,20 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     if (__builtin_expect(!t, 0))
         return -1;
 
-    void *stack = stack_alloc();
-    if (__builtin_expect(!stack, 0))
-    {
-        thread_cold_t *tc = THREAD_COLD(t);
-        tc->stack_base = NULL;
-        tc->waiting = NULL;
-        tc->func = func;
-        tc->func_arg = arg;
-        tc->retval = func(arg);
-        tc->state = FINISHED;
-        *newthread = (thread_t)t;
-        return 0;
-    }
-
     thread_cold_t *tc = THREAD_COLD(t);
-    tc->stack_base = stack;
+    tc->stack_base = NULL;
     tc->state = READY;
     tc->retval = NULL;
     tc->waiting = NULL;
-    tc->func = func;
-    tc->func_arg = arg;
-    t->rsp = stack_init(stack, func, arg);
-
-#ifndef NVALGRIND
-    tc->valgrind_stackid = VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
-#endif
-
-    dedup_insert(func, arg, t);
+    tc->func = NULL;
+    tc->func_arg = NULL;
+    tc->inline_jmpbuf = NULL;
+    t->rsp = NULL;
 
     flush_last_created();
     last_created = t;
+    last_created_func = func;
+    last_created_arg = arg;
     *newthread = (thread_t)t;
     return 0;
 }
@@ -340,29 +356,50 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
     if (__builtin_expect(tc->state != FINISHED, 1))
     {
-        tc->waiting = current;
-
-        thread_hot_t *next;
         if (__builtin_expect(last_created == t, 1))
         {
-
-            next = t;
             last_created = NULL;
+
+            if (__builtin_expect(t->rsp == NULL, 1))
+            {
+                thread_hot_t *prev = current;
+                current = t;
+                void *(*fn)(void *) = last_created_func;
+                void *ar = last_created_arg;
+
+                jmp_buf jb;
+                if (__builtin_expect(setjmp(jb) == 0, 1))
+                {
+                    tc->inline_jmpbuf = &jb;
+                    tc->retval = fn(ar);
+                }
+                tc->inline_jmpbuf = NULL;
+                tc->state = FINISHED;
+                current = prev;
+            }
+            else
+            {
+                tc->waiting = current;
+                thread_hot_t *prev = current;
+                current = t;
+                __builtin_prefetch(t->rsp, 0, 3);
+                context_switch(&prev->rsp, t->rsp);
+            }
         }
         else
         {
-
+            tc->waiting = current;
             flush_last_created();
-            next = sched_dequeue_lifo();
+            thread_hot_t *next = sched_dequeue_lifo();
             if (__builtin_expect(!next, 0))
                 return -1;
+
+            thread_hot_t *prev = current;
+            current = next;
+
+            __builtin_prefetch(next->rsp, 0, 3);
+            context_switch(&prev->rsp, next->rsp);
         }
-
-        thread_hot_t *prev = current;
-        current = next;
-
-        __builtin_prefetch(next->rsp, 0, 3);
-        context_switch(&prev->rsp, next->rsp);
     }
 
     if (retval)
@@ -390,6 +427,13 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
 {
     thread_cold_t *cc = THREAD_COLD(current);
     cc->retval = retval;
+
+    if (__builtin_expect(cc->inline_jmpbuf != NULL, 0))
+    {
+        longjmp(*cc->inline_jmpbuf, 1);
+        __builtin_unreachable();
+    }
+
     cc->state = FINISHED;
 
     if (__builtin_expect(cc->func != NULL, 1))

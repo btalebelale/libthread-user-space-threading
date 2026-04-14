@@ -15,7 +15,9 @@
 #endif
 #endif
 
+#ifndef DEDUP_BITS
 #define DEDUP_BITS 18
+#endif
 #define DEDUP_CAP (1 << DEDUP_BITS)
 #define DEDUP_MAGIC 11400714819323198485ULL
 
@@ -260,7 +262,7 @@ static void dedup_mem_destroy(void)
     swiss_val = NULL;
 }
 
-#else 
+#else
 #define DEDUP_MASK (DEDUP_CAP - 1)
 #define DEDUP_SHIFT (64 - DEDUP_BITS)
 
@@ -359,6 +361,6 @@ static void dedup_mem_destroy(void)
     dedup_val = NULL;
 }
 
-#endif 
+#endif
 
 #endif 
