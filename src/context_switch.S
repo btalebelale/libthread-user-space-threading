@@ -54,5 +54,58 @@ thread_trampoline:
     ud2                       
 .size thread_trampoline, .-thread_trampoline
 
+	// thread_yield inlined
+	// int thread_yield(void)
+
+.globl thread_yield
+.type thread_yield, @function
+    .p2align 4
+thread_yield:
+    movq  last_created(%rip), %rax
+    testq %rax, %rax
+    jnz   .Lyield_flush
+.Lyield_fast:
+    movq  current(%rip), %rdi
+    movq  8(%rdi), %rsi          // next = current->sched_next
+    cmpq  %rsi, %rdi
+    je    .Lyield_alone
+
+    prefetcht0 (%rsi)             // prefetch next->rsp
+
+    movq  %rsi, current(%rip)    // current = next
+
+    pushq %rbx
+    pushq %rbp
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+
+    movq  %rsp, (%rdi)           // prev->rsp = rsp
+    movq  (%rsi), %rsp           // rsp = next->rsp
+
+    popq  %r15
+    popq  %r14
+    popq  %r13
+    popq  %r12
+    popq  %rbp
+    popq  %rbx
+
+    xorl  %eax, %eax
+    retq
+
+.Lyield_alone:
+    xorl  %eax, %eax
+    retq
+
+    .p2align 4
+.Lyield_flush:
+    subq  $8, %rsp              
+    call  flush_last_created_slow
+    addq  $8, %rsp
+    jmp   .Lyield_fast
+
+.size thread_yield, .-thread_yield
+
 // Marque le stack comme non-exécutable (évite le warning linker)
 .section .note.GNU-stack,"",@progbits

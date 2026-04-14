@@ -2,10 +2,8 @@ CC      = gcc
 VALGRIND_FLAG ?=
 STACK_SIZE ?=
 STACK_FLAG = $(if $(STACK_SIZE),-DSTACK_SIZE=$(STACK_SIZE),)
-RING_BITS ?=
-RING_FLAG = $(if $(RING_BITS),-DRING_BITS=$(RING_BITS),)
 EXTRA_CFLAGS ?=
-CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -DNDEBUG -I./src $(VALGRIND_FLAG) $(STACK_FLAG) $(RING_FLAG) $(EXTRA_CFLAGS)
+CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -fno-plt -DNDEBUG -I./src $(VALGRIND_FLAG) $(STACK_FLAG) $(EXTRA_CFLAGS)
 
 LIB_SRC_C = src/thread.c src/scheduler.c
 LIB_SRC_S = src/context_switch.S

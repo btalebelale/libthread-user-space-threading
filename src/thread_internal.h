@@ -19,6 +19,8 @@ typedef enum
 typedef struct thread_hot
 {
     void *rsp;
+    struct thread_hot *sched_next;
+    struct thread_hot *sched_prev;
 } thread_hot_t;
 
 // COLD : touché uniquement à create/join/exit

@@ -35,7 +35,7 @@ static int thread_slab_next;
 
 static thread_hot_t *thread_free_head;
 
-static thread_hot_t *last_created;
+__attribute__((visibility("hidden"))) thread_hot_t *last_created;
 static void *(*last_created_func)(void *);
 static void *last_created_arg;
 
@@ -47,7 +47,7 @@ static void *stack_alloc(void);
 static void stack_release(void *s);
 static void *stack_init(void *stack_base, void *(*func)(void *), void *arg);
 
-static __attribute__((noinline, cold)) void flush_last_created_slow(void)
+__attribute__((noinline, cold, visibility("hidden"))) void flush_last_created_slow(void)
 {
     thread_cold_t *lc = THREAD_COLD(last_created);
 
@@ -228,15 +228,18 @@ __attribute__((cold)) static void clean_exit(void)
 
 __attribute__((cold)) static void thread_system_destroy(void)
 {
-    while (!is_sched_empty())
+    if (current != NULL)
     {
-        thread_hot_t *t = sched_dequeue_fifo();
-        thread_cold_t *tc = THREAD_COLD(t);
-        if (tc->stack_base)
+        while (!is_sched_empty())
         {
+            thread_hot_t *t = sched_dequeue_fifo();
+            thread_cold_t *tc = THREAD_COLD(t);
+            if (tc->stack_base)
+            {
 #ifndef NVALGRIND
-            VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
+                VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
 #endif
+            }
         }
     }
     current = NULL;
@@ -259,6 +262,8 @@ __attribute__((constructor, cold)) static void init_system(void)
         exit(1);
     }
     current->rsp = NULL;
+    current->sched_next = current;
+    current->sched_prev = current;
 
     thread_cold_t *cc = THREAD_COLD(current);
     cc->state = RUNNING;
@@ -331,23 +336,7 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     return 0;
 }
 
-__attribute__((visibility("default"), hot, flatten)) int thread_yield(void)
-{
-    flush_last_created();
-
-    if (__builtin_expect(is_sched_empty(), 0))
-        return 0;
-
-    thread_hot_t *prev = current;
-
-    sched_enqueue(prev);
-
-    thread_hot_t *next = sched_dequeue_fifo();
-    current = next;
-
-    context_switch(&prev->rsp, next->rsp);
-    return 0;
-}
+// thread_yield est implémenté dans context_switch.S
 
 __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, void **retval)
 {
@@ -364,6 +353,8 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
             {
                 thread_hot_t *prev = current;
                 current = t;
+                sched_replace(prev, t);
+
                 void *(*fn)(void *) = last_created_func;
                 void *ar = last_created_arg;
 
@@ -375,6 +366,8 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
                 }
                 tc->inline_jmpbuf = NULL;
                 tc->state = FINISHED;
+
+                sched_replace(t, prev);
                 current = prev;
             }
             else
@@ -390,14 +383,16 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
         {
             tc->waiting = current;
             flush_last_created();
-            thread_hot_t *next = sched_dequeue_lifo();
-            if (__builtin_expect(!next, 0))
+
+            if (__builtin_expect(is_sched_empty(), 0))
                 return -1;
+
+            thread_hot_t *next = current->sched_prev;
+            sched_remove(current);
 
             thread_hot_t *prev = current;
             current = next;
 
-            __builtin_prefetch(next->rsp, 0, 3);
             context_switch(&prev->rsp, next->rsp);
         }
     }
@@ -436,16 +431,19 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
 
     cc->state = FINISHED;
 
+    if (__builtin_expect(cc->waiting != NULL, 1))
+    {
+        
+        sched_replace(current, cc->waiting);
+        current = cc->waiting;
+        context_restore(cc->waiting->rsp);
+    }
+
+   
     if (__builtin_expect(cc->func != NULL, 1))
     {
         dedup_remove(cc->func, cc->func_arg);
         cc->func = NULL;
-    }
-
-    if (__builtin_expect(cc->waiting != NULL, 1))
-    {
-        current = cc->waiting;
-        context_restore(cc->waiting->rsp);
     }
 
     flush_last_created();
@@ -453,7 +451,8 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
     if (__builtin_expect(is_sched_empty(), 0))
         context_restore(exit_rsp);
 
-    thread_hot_t *next = sched_dequeue_lifo();
+    thread_hot_t *next = current->sched_prev;
+    sched_remove(current);
     current = next;
 
     context_restore(next->rsp);
