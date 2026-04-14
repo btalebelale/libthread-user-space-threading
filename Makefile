@@ -43,11 +43,9 @@ $(LIB_NAME): $(LIB_OBJ)
 	$(CC) $(CFLAGS) -shared -o $@ $^
 
 src/%.o: src/%.c src/thread.h
-	-clang-format -i $<
 	$(CC) $(CFLAGS) -c $< -o $@
 
 tests/%: tests/%.c $(LIB_NAME)
-	-clang-format -i $<
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable $< -o $@ -L. -lthread
 
 pthreads: $(TEST_PTHREAD_BINS)
