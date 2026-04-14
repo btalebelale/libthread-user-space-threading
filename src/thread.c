@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+
 #ifndef NVALGRIND
 #include <valgrind/memcheck.h>
 #include <valgrind/valgrind.h>
@@ -34,6 +35,10 @@ static thread_cold_t *cold_slab;
 static int thread_slab_next;
 
 static thread_hot_t *thread_free_head;
+
+
+static int dedup_enabled = 1;
+
 
 __attribute__((visibility("hidden"))) thread_hot_t *last_created;
 static void *(*last_created_func)(void *);
@@ -72,7 +77,9 @@ __attribute__((noinline, cold, visibility("hidden"))) void flush_last_created_sl
 
     lc->func = last_created_func;
     lc->func_arg = last_created_arg;
-    dedup_insert(last_created_func, last_created_arg, last_created);
+    if(dedup_enabled){
+        dedup_insert(last_created_func, last_created_arg, last_created);
+    }
     sched_enqueue(last_created);
     last_created = NULL;
 }
@@ -296,16 +303,15 @@ __attribute__((visibility("default"))) thread_t thread_self(void)
 __attribute__((visibility("default"))) int thread_create(thread_t *newthread, void *(*func)(void *),
                                                          void *arg)
 {
-
-    if (__builtin_expect(last_created != NULL, 0))
-    {
-        if (last_created_func == func && last_created_arg == arg)
+    if (__builtin_expect(dedup_enabled, 1)){
+        if (__builtin_expect(last_created != NULL, 0))
         {
-            *newthread = (thread_t)last_created;
-            return 0;
+            if (last_created_func == func && last_created_arg == arg)
+            {
+                *newthread = (thread_t)last_created;
+                return 0;
+            }
         }
-    }
-    {
         thread_hot_t *existing = dedup_lookup(func, arg);
         if (__builtin_expect(existing != NULL, 0))
         {
@@ -402,7 +408,8 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
     if (__builtin_expect(tc->func != NULL, 1))
     {
-        dedup_remove(tc->func, tc->func_arg);
+        if (dedup_enabled)
+            dedup_remove(tc->func, tc->func_arg);
         tc->func = NULL;
     }
 
@@ -442,7 +449,8 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
    
     if (__builtin_expect(cc->func != NULL, 1))
     {
-        dedup_remove(cc->func, cc->func_arg);
+        if (dedup_enabled)
+            dedup_remove(cc->func, cc->func_arg);
         cc->func = NULL;
     }
 
@@ -460,23 +468,74 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
 
 // Mutex (stubs)
 
+#define MUTEX(m) ((mutex_internal_t *)(m))
+
+
 __attribute__((visibility("default"))) int thread_mutex_init(thread_mutex_t *mutex)
 {
-    (void)mutex;
+    dedup_enabled = 0;
+    mutex_internal_t *m = MUTEX(mutex);
+    m->locked = 0;                                                                                                                    
+    m->wait_head = NULL;
+    m->wait_tail = NULL;                                                                                                              
     return 0;
 }
+
+
 __attribute__((visibility("default"))) int thread_mutex_destroy(thread_mutex_t *mutex)
 {
     (void)mutex;
     return 0;
 }
+
+
 __attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mutex)
 {
-    (void)mutex;
+    mutex_internal_t *m = MUTEX(mutex);                                                                                               
+                                                                                                                                        
+    if (__builtin_expect(!m->locked, 1))
+    {                                                                                                                                 
+        m->locked = 1;
+        return 0;
+    }
+
+    flush_last_created();
+
+    if (__builtin_expect(is_sched_empty(), 0))
+        return -1;
+                                                                                                                                      
+    thread_hot_t *me = current;
+    thread_hot_t *next = current->sched_prev;
+    sched_remove(current);
+
+    me->sched_next = NULL; 
+    if (m->wait_tail == NULL)                                                                                                         
+        m->wait_head = me;
+    else                                                                                                                              
+        m->wait_tail->sched_next = me;
+    m->wait_tail = me;                                                                                                                
+                                                                                                           
+    current = next;
+    context_switch(&me->rsp, next->rsp);                                                                                            
+                                                                            
     return 0;
 }
+
+
 __attribute__((visibility("default"))) int thread_mutex_unlock(thread_mutex_t *mutex)
 {
-    (void)mutex;
-    return 0;
+    mutex_internal_t *m = MUTEX(mutex);                                                                                               
+                  
+    thread_hot_t *w = m->wait_head;                                                                                                   
+    if (w == NULL)
+    {                                                                                                                                 
+        m->locked = 0;
+        return 0;
+    }                                                     
+    m->wait_head = w->sched_next;
+    if (m->wait_head == NULL)                                                                                                         
+        m->wait_tail = NULL;
+                                                                                                                                      
+    sched_enqueue(w);
+    return 0;     
 }
