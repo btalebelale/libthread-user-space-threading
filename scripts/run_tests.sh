@@ -42,8 +42,8 @@ run_test ./tests/62-mutex 100
 run_test ./tests/63-mutex-equity
 run_test ./tests/64-mutex-join
 
-#echo "===== PREEMPTION =========="
-#run_test ./tests/71-preemption 100
+echo "===== PREEMPTION =========="
+run_test ./tests/71-preemption 100
 
 #echo "===== DEADLOCK ============"
 #run_test ./tests/81-deadlock

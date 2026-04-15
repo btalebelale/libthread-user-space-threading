@@ -7,6 +7,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <signal.h>
+#include <string.h>                                                                                                            
+#include <sys/time.h>
 
 #ifndef NVALGRIND
 #include <valgrind/memcheck.h>
@@ -38,6 +41,54 @@ static thread_hot_t *thread_free_head;
 
 
 static int dedup_enabled = 1;
+
+
+// La préemption
+#ifdef USE_PREEMPTION
+                                                                                                                               
+#define PREEMPT_INTERVAL_US 100  // 1 ms                                                                                            
+static volatile int preempt_tick_count;
+
+static void preempt_handler(int sig)                                                                                                  
+{               
+    (void)sig;  
+    thread_yield();
+}                                                                                                                                     
+                
+__attribute__((cold)) static void preempt_init(void)                                                                                  
+{                                                                                                                                     
+  struct sigaction sa;                                                                                                              
+  memset(&sa, 0, sizeof(sa));
+  sigemptyset(&sa.sa_mask);
+  sa.sa_handler = preempt_handler;
+  sa.sa_flags = SA_RESTART;                                                                                                         
+  sigaction(SIGALRM, &sa, NULL);
+                                                                                                                                    
+  struct itimerval timer;                                                                                                           
+  timer.it_value.tv_sec = 0;
+  timer.it_value.tv_usec = PREEMPT_INTERVAL_US;                                                                                     
+  timer.it_interval = timer.it_value;                                                                                               
+  setitimer(ITIMER_REAL, &timer, NULL);
+} 
+                                                                                                                                      
+static inline void preempt_block(sigset_t *old)                                                                                       
+{
+    sigset_t mask;                                                                                                                    
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGALRM);                                                                                                        
+    sigprocmask(SIG_BLOCK, &mask, old);
+}                                                                                                                                     
+                
+static inline void preempt_restore(sigset_t *old)                                                                                     
+{
+    sigprocmask(SIG_SETMASK, old, NULL);                                                                                              
+}               
+#else
+#define preempt_init()            ((void)0)
+#define preempt_block(old)        ((void)(old))                                                                                       
+#define preempt_restore(old)      ((void)(old))
+
+#endif 
 
 
 __attribute__((visibility("hidden"))) thread_hot_t *last_created;
@@ -187,6 +238,12 @@ static void *exit_rsp;
 
 __attribute__((visibility("hidden"))) void thread_entry(void *(*func)(void *), void *arg)
 {
+#ifdef USE_PREEMPTION
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGALRM);
+    sigprocmask(SIG_UNBLOCK, &mask, NULL);
+#endif
     void *ret = func(arg);
     thread_exit(ret);
     __builtin_unreachable();
@@ -235,6 +292,14 @@ __attribute__((cold)) static void clean_exit(void)
 
 __attribute__((cold)) static void thread_system_destroy(void)
 {
+    struct itimerval off;                                                                                                             
+    memset(&off, 0, sizeof(off));
+    setitimer(ITIMER_REAL, &off, NULL);                                                                                               
+    sigset_t mask;                                                                                                                    
+    sigemptyset(&mask);                                                                                                               
+    sigaddset(&mask, SIGALRM);                                                                                                        
+    sigprocmask(SIG_BLOCK, &mask, NULL);
+
     if (current != NULL)
     {
         while (!is_sched_empty())
@@ -293,6 +358,8 @@ __attribute__((constructor, cold)) static void init_system(void)
     *(--s) = 0;
     exit_rsp = s;
     VALGRIND_MAKE_MEM_DEFINED(s, 7 * sizeof(void *));
+
+    preempt_init();
 }
 
 __attribute__((visibility("default"))) thread_t thread_self(void)
@@ -303,6 +370,9 @@ __attribute__((visibility("default"))) thread_t thread_self(void)
 __attribute__((visibility("default"))) int thread_create(thread_t *newthread, void *(*func)(void *),
                                                          void *arg)
 {
+    sigset_t old;                                                                                                                     
+    preempt_block(&old);
+
     if (__builtin_expect(dedup_enabled, 1)){
         if (__builtin_expect(last_created != NULL, 0))
         {
@@ -339,13 +409,34 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     last_created_func = func;
     last_created_arg = arg;
     *newthread = (thread_t)t;
+
+    preempt_restore(&old); 
+
     return 0;
 }
 
-// thread_yield est implémenté dans context_switch.S
+// thread_yield_asm est implémenté dans context_switch.S
+
+#ifdef USE_PREEMPTION
+                                                                                                                                        
+__attribute__((visibility("hidden"))) extern int thread_yield_asm(void);                                                              
+
+__attribute__((visibility("default"))) int thread_yield(void)                                                                         
+{               
+    sigset_t old;
+    preempt_block(&old);
+    int r = thread_yield_asm();                                                                                                       
+    preempt_restore(&old);
+    return r;                                                                                                                         
+}  
+
+#endif
 
 __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, void **retval)
 {
+    sigset_t old;
+    preempt_block(&old);
+
     thread_hot_t *t = (thread_hot_t *)thread;
     thread_cold_t *tc = THREAD_COLD(t);
 
@@ -422,11 +513,16 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
     }
 
     thread_release(t);
+    preempt_restore(&old);
+
     return 0;
 }
 
 __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
 {
+    sigset_t old;                                                                                                                     
+    preempt_block(&old);
+
     thread_cold_t *cc = THREAD_COLD(current);
     cc->retval = retval;
 
@@ -491,6 +587,9 @@ __attribute__((visibility("default"))) int thread_mutex_destroy(thread_mutex_t *
 
 __attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mutex)
 {
+    sigset_t old;                                                                                                                     
+    preempt_block(&old);
+
     mutex_internal_t *m = MUTEX(mutex);                                                                                               
                                                                                                                                         
     if (__builtin_expect(!m->locked, 1))
@@ -517,13 +616,18 @@ __attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mut
                                                                                                            
     current = next;
     context_switch(&me->rsp, next->rsp);                                                                                            
-                                                                            
+    
+    preempt_restore(&old);
+
     return 0;
 }
 
 
 __attribute__((visibility("default"))) int thread_mutex_unlock(thread_mutex_t *mutex)
 {
+    sigset_t old;                                                                                                                     
+    preempt_block(&old);
+
     mutex_internal_t *m = MUTEX(mutex);                                                                                               
                   
     thread_hot_t *w = m->wait_head;                                                                                                   
@@ -537,5 +641,8 @@ __attribute__((visibility("default"))) int thread_mutex_unlock(thread_mutex_t *m
         m->wait_tail = NULL;
                                                                                                                                       
     sched_enqueue(w);
+
+    preempt_restore(&old);
+
     return 0;     
 }

@@ -32,8 +32,9 @@ $VALGRIND ./tests/62-mutex 20
 $VALGRIND ./tests/63-mutex-equity
 $VALGRIND ./tests/64-mutex-join
 
-#echo "===== PREEMPTION ====="
-#$VALGRIND ./tests/71-preemption 20
-#
+echo "===== PREEMPTION ====="
+$VALGRIND ./tests/71-preemption 20
+
+
 #echo "===== DEADLOCK ====="
 #$VALGRIND ./tests/81-deadlock

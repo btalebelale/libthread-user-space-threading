@@ -57,10 +57,10 @@ thread_trampoline:
 	// thread_yield inlined
 	// int thread_yield(void)
 
-.globl thread_yield
-.type thread_yield, @function
+.globl thread_yield_asm
+.type thread_yield_asm, @function
     .p2align 4
-thread_yield:
+thread_yield_asm:
     movq  last_created(%rip), %rax
     testq %rax, %rax
     jnz   .Lyield_flush
@@ -105,7 +105,15 @@ thread_yield:
     addq  $8, %rsp
     jmp   .Lyield_fast
 
-.size thread_yield, .-thread_yield
+.size thread_yield_asm, .-thread_yield_asm
+
+#ifndef USE_PREEMPTION                                                                                                                
+// thread_yield == thread_yield_asm.
+.globl thread_yield                                                                                                                   
+.type thread_yield, @function
+    .set thread_yield, thread_yield_asm                                                                                               
+.size thread_yield, .-thread_yield_asm
+#endif 
 
 // Marque le stack comme non-exécutable (évite le warning linker)
 .section .note.GNU-stack,"",@progbits

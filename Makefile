@@ -27,7 +27,7 @@ TEST_BINS = tests/01-main \
             tests/62-mutex \
             tests/63-mutex-equity \
             tests/64-mutex-join \
-            #tests/71-preemption \
+            tests/71-preemption 
             #tests/81-deadlock
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
@@ -40,11 +40,14 @@ all: $(LIB_NAME) $(TEST_BINS)
 $(LIB_NAME): $(LIB_OBJ)
 	$(CC) $(CFLAGS) -shared -o $@ $^
 
-src/%.o: src/%.c src/thread.h
+src/%.o: src/%.c src/thread.h 
 	$(CC) $(CFLAGS) -c $< -o $@
 
 tests/%: tests/%.c $(LIB_NAME)
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable $< -o $@ -L. -lthread
+
+tests/71-preemption: tests/71-preemption.c $(LIB_SRC_C) $(LIB_SRC_S)
+	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PREEMPTION $^ -o $@
 
 pthreads: $(TEST_PTHREAD_BINS)
 
