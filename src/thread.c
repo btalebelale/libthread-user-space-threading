@@ -46,7 +46,7 @@ static int dedup_enabled = 1;
 // La préemption
 #ifdef USE_PREEMPTION
                                                                                                                                
-#define PREEMPT_INTERVAL_US 10                                                                                              
+#define PREEMPT_INTERVAL_US 20                                                                                            
 static volatile int preempt_tick_count;
 
 static void preempt_handler(int sig)                                                                                                  
