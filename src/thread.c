@@ -456,7 +456,7 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
                 void *ar = last_created_arg;
 
                 jmp_buf jb;
-                if (__builtin_expect(setjmp(jb) == 0, 1))
+                if (__builtin_expect(_setjmp(jb) == 0, 1))
                 {
                     tc->inline_jmpbuf = &jb;
                     tc->retval = fn(ar);
@@ -528,7 +528,7 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
 
     if (__builtin_expect(cc->inline_jmpbuf != NULL, 0))
     {
-        longjmp(*cc->inline_jmpbuf, 1);
+        _longjmp(*cc->inline_jmpbuf, 1);
         __builtin_unreachable();
     }
 
@@ -600,8 +600,10 @@ __attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mut
 
     flush_last_created();
 
-    if (__builtin_expect(is_sched_empty(), 0))
+    if (__builtin_expect(is_sched_empty(), 0)){
+        preempt_restore(&old);
         return -1;
+    }
                                                                                                                                       
     thread_hot_t *me = current;
     thread_hot_t *next = current->sched_prev;
@@ -615,6 +617,7 @@ __attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mut
     m->wait_tail = me;                                                                                                                
                                                                                                            
     current = next;
+    __builtin_prefetch(next->rsp, 0, 3);
     context_switch(&me->rsp, next->rsp);                                                                                            
     
     preempt_restore(&old);
@@ -634,6 +637,7 @@ __attribute__((visibility("default"))) int thread_mutex_unlock(thread_mutex_t *m
     if (w == NULL)
     {                                                                                                                                 
         m->locked = 0;
+        preempt_restore(&old);
         return 0;
     }                                                     
     m->wait_head = w->sched_next;
