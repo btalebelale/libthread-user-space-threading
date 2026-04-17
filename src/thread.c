@@ -10,6 +10,8 @@
 #include <signal.h>
 #include <string.h>                                                                                                            
 #include <sys/time.h>
+#include <errno.h>
+
 
 #ifndef NVALGRIND
 #include <valgrind/memcheck.h>
@@ -342,6 +344,7 @@ __attribute__((constructor, cold)) static void init_system(void)
     cc->stack_base = NULL;
     cc->retval = NULL;
     cc->waiting = NULL;
+    cc->joining = NULL;
     cc->func = NULL;
     cc->func_arg = NULL;
     cc->inline_jmpbuf = NULL;
@@ -399,6 +402,7 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     tc->state = READY;
     tc->retval = NULL;
     tc->waiting = NULL;
+    tc->joining = NULL;
     tc->func = NULL;
     tc->func_arg = NULL;
     tc->inline_jmpbuf = NULL;
@@ -442,6 +446,16 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
     if (__builtin_expect(tc->state != FINISHED, 1))
     {
+        for (thread_hot_t *p = t; p != NULL; p = THREAD_COLD(p)->joining)                                                             
+        {                                                                                                                             
+            if (p == current)                                                                                                         
+            {                                                                                                                         
+                preempt_restore(&old);
+                return EDEADLK;                                                                                                       
+            }
+        }                                                                                                                             
+        THREAD_COLD(current)->joining = t;
+
         if (__builtin_expect(last_created == t, 1))
         {
             last_created = NULL;
@@ -481,8 +495,10 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
             tc->waiting = current;
             flush_last_created();
 
-            if (__builtin_expect(is_sched_empty(), 0))
+            if (__builtin_expect(is_sched_empty(), 0)){
+                preempt_restore(&old);
                 return -1;
+            }
 
             thread_hot_t *next = current->sched_prev;
             sched_remove(current);
@@ -492,6 +508,7 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
             context_switch(&prev->rsp, next->rsp);
         }
+        THREAD_COLD(current)->joining = NULL;
     }
 
     if (retval)

@@ -27,8 +27,8 @@ TEST_BINS = tests/01-main \
             tests/62-mutex \
             tests/63-mutex-equity \
             tests/64-mutex-join \
-            tests/71-preemption 
-            #tests/81-deadlock
+            tests/71-preemption  \
+            tests/81-deadlock
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 

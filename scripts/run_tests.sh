@@ -45,8 +45,8 @@ run_test ./tests/64-mutex-join
 echo "===== PREEMPTION =========="
 run_test ./tests/71-preemption 100
 
-#echo "===== DEADLOCK ============"
-#run_test ./tests/81-deadlock
+echo "===== DEADLOCK ============"
+run_test ./tests/81-deadlock
 
 echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}TOUS LES TESTS SONT PASSÉS AVEC SUCCÈS !${NC}"

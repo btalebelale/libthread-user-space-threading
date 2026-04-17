@@ -35,6 +35,5 @@ $VALGRIND ./tests/64-mutex-join
 echo "===== PREEMPTION ====="
 $VALGRIND ./tests/71-preemption 20
 
-
-#echo "===== DEADLOCK ====="
-#$VALGRIND ./tests/81-deadlock
+echo "===== DEADLOCK ====="
+$VALGRIND ./tests/81-deadlock

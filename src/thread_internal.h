@@ -29,6 +29,7 @@ typedef struct thread_cold
     void *retval;
     void *stack_base;
     struct thread_hot *waiting;
+    struct thread_hot *joining; // le thread que j'attende
     uint32_t state;
     int valgrind_stackid;
     void *(*func)(void *); // pour déduplication
