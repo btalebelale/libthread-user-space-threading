@@ -4,15 +4,13 @@
 #include "thread_internal.h"
 
 #include <stdint.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#ifdef DEDUP_SWISS
-#include <string.h>
 #ifdef __SSE2__
 #include <emmintrin.h>
-#endif
 #endif
 
 #ifndef DEDUP_BITS
@@ -22,9 +20,6 @@
 #define DEDUP_MAGIC 11400714819323198485ULL
 
 typedef void *(*func_ptr_t)(void *);
-
-#ifdef DEDUP_SWISS
-
 
 #define SWISS_GROUP_SIZE 16
 #define SWISS_GROUPS (DEDUP_CAP / SWISS_GROUP_SIZE)
@@ -87,7 +82,7 @@ uint32_t swiss_match_empty_or_deleted(const int8_t *ctrl)
     return (uint32_t)_mm_movemask_epi8(group);
 }
 
-#else 
+#else
 
 static inline __attribute__((always_inline))
 uint32_t swiss_match(const int8_t *ctrl, int8_t tag)
@@ -262,105 +257,4 @@ static void dedup_mem_destroy(void)
     swiss_val = NULL;
 }
 
-#else
-#define DEDUP_MASK (DEDUP_CAP - 1)
-#define DEDUP_SHIFT (64 - DEDUP_BITS)
-
-static func_ptr_t *dedup_key_func;
-static void **dedup_key_arg;
-static thread_hot_t **dedup_val;
-
-static inline __attribute__((always_inline))
-uint32_t dedup_hash(func_ptr_t func, void *arg)
-{
-    uint64_t h = (uint64_t)(uintptr_t)func * DEDUP_MAGIC;
-    h ^= (uint64_t)(uintptr_t)arg * 7046029254386353131ULL;
-    return (uint32_t)(h >> DEDUP_SHIFT);
-}
-
-static inline __attribute__((always_inline))
-thread_hot_t *dedup_lookup(func_ptr_t func, void *arg)
-{
-    uint32_t h = dedup_hash(func, arg);
-    for (;;)
-    {
-        if (__builtin_expect(dedup_val[h] == NULL, 0))
-            return NULL;
-        if (dedup_key_func[h] == func && dedup_key_arg[h] == arg)
-            return dedup_val[h];
-        h = (h + 1) & DEDUP_MASK;
-    }
-}
-
-static inline __attribute__((always_inline))
-void dedup_insert(func_ptr_t func, void *arg, thread_hot_t *t)
-{
-    uint32_t h = dedup_hash(func, arg);
-    while (dedup_val[h] != NULL)
-        h = (h + 1) & DEDUP_MASK;
-    dedup_key_func[h] = func;
-    dedup_key_arg[h] = arg;
-    dedup_val[h] = t;
-}
-
-static inline
-void dedup_remove(func_ptr_t func, void *arg)
-{
-    uint32_t h = dedup_hash(func, arg);
-    while (!(dedup_key_func[h] == func && dedup_key_arg[h] == arg))
-    {
-        if (__builtin_expect(dedup_val[h] == NULL, 0))
-            return;
-        h = (h + 1) & DEDUP_MASK;
-    }
-
-    for (;;)
-    {
-        uint32_t next = (h + 1) & DEDUP_MASK;
-        if (dedup_val[next] == NULL)
-            break;
-        uint32_t ideal = dedup_hash(dedup_key_func[next], dedup_key_arg[next]);
-        if (((h - ideal) & DEDUP_MASK) >= ((next - ideal) & DEDUP_MASK))
-            break;
-        dedup_key_func[h] = dedup_key_func[next];
-        dedup_key_arg[h] = dedup_key_arg[next];
-        dedup_val[h] = dedup_val[next];
-        h = next;
-    }
-    dedup_val[h] = NULL;
-}
-
-__attribute__((cold))
-static void dedup_mem_init(void)
-{
-    dedup_key_func = mmap(NULL, (size_t)DEDUP_CAP * sizeof(func_ptr_t),
-                          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    dedup_key_arg = mmap(NULL, (size_t)DEDUP_CAP * sizeof(void *),
-                         PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    dedup_val = mmap(NULL, (size_t)DEDUP_CAP * sizeof(thread_hot_t *),
-                     PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (__builtin_expect(dedup_key_func == MAP_FAILED || dedup_key_arg == MAP_FAILED ||
-                         dedup_val == MAP_FAILED, 0))
-    {
-        perror("mmap dedup SoA");
-        exit(1);
-    }
-}
-
-__attribute__((cold))
-static void dedup_mem_destroy(void)
-{
-    if (dedup_key_func && dedup_key_func != MAP_FAILED)
-        munmap(dedup_key_func, (size_t)DEDUP_CAP * sizeof(func_ptr_t));
-    if (dedup_key_arg && dedup_key_arg != MAP_FAILED)
-        munmap(dedup_key_arg, (size_t)DEDUP_CAP * sizeof(void *));
-    if (dedup_val && dedup_val != MAP_FAILED)
-        munmap(dedup_val, (size_t)DEDUP_CAP * sizeof(thread_hot_t *));
-    dedup_key_func = NULL;
-    dedup_key_arg = NULL;
-    dedup_val = NULL;
-}
-
 #endif
-
-#endif 
