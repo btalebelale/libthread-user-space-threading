@@ -61,6 +61,9 @@ thread_trampoline:
 .type thread_yield_asm, @function
     .p2align 4
 thread_yield_asm:
+    cmpl  $0, inline_executing(%rip)
+    jne   .Lyield_inline_noop
+
     movq  last_created(%rip), %rax
     testq %rax, %rax
     jnz   .Lyield_flush
@@ -70,7 +73,10 @@ thread_yield_asm:
     cmpq  %rsi, %rdi
     je    .Lyield_alone
 
-    prefetcht0 (%rsi)             // prefetch next->rsp
+    // Load next->rsp — also prefetches cache line for stack swap
+    movq  (%rsi), %rcx
+    testq %rcx, %rcx
+    jz    .Lyield_lazy
 
     movq  %rsi, current(%rip)    // current = next
 
@@ -82,7 +88,7 @@ thread_yield_asm:
     pushq %r15
 
     movq  %rsp, (%rdi)           // prev->rsp = rsp
-    movq  (%rsi), %rsp           // rsp = next->rsp
+    movq  %rcx, %rsp             // rsp = next->rsp (already loaded)
 
     popq  %r15
     popq  %r14
@@ -98,11 +104,28 @@ thread_yield_asm:
     xorl  %eax, %eax
     retq
 
+.Lyield_inline_noop:
+    xorl  %eax, %eax
+    retq
+
     .p2align 4
 .Lyield_flush:
-    subq  $8, %rsp              
+    subq  $8, %rsp
     call  flush_last_created_slow
     addq  $8, %rsp
+    jmp   .Lyield_fast
+
+    .p2align 4
+.Lyield_lazy:
+    // rsi = next thread needing lazy stack allocation
+    pushq %rdi
+    pushq %rsi
+    subq  $8, %rsp               // align stack to 16
+    movq  %rsi, %rdi
+    call  lazy_stack_alloc
+    addq  $8, %rsp
+    popq  %rsi
+    popq  %rdi
     jmp   .Lyield_fast
 
 .size thread_yield_asm, .-thread_yield_asm

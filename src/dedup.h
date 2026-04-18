@@ -14,7 +14,7 @@
 #endif
 
 #ifndef DEDUP_BITS
-#define DEDUP_BITS 18
+#define DEDUP_BITS 12
 #endif
 #define DEDUP_CAP (1 << DEDUP_BITS)
 #define DEDUP_MAGIC 11400714819323198485ULL
@@ -223,20 +223,29 @@ void dedup_remove(func_ptr_t func, void *arg)
 __attribute__((cold))
 static void dedup_mem_init(void)
 {
-    swiss_ctrl = mmap(NULL, (size_t)DEDUP_CAP,
-                      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    swiss_key_func = mmap(NULL, (size_t)DEDUP_CAP * sizeof(func_ptr_t),
-                          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    swiss_key_arg = mmap(NULL, (size_t)DEDUP_CAP * sizeof(void *),
-                         PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    swiss_val = mmap(NULL, (size_t)DEDUP_CAP * sizeof(thread_hot_t *),
-                     PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (__builtin_expect(swiss_ctrl == MAP_FAILED || swiss_key_func == MAP_FAILED ||
-                         swiss_key_arg == MAP_FAILED || swiss_val == MAP_FAILED, 0))
+    // Single contiguous allocation for better cache locality
+    size_t ctrl_sz = (size_t)DEDUP_CAP;
+    size_t func_sz = (size_t)DEDUP_CAP * sizeof(func_ptr_t);
+    size_t arg_sz  = (size_t)DEDUP_CAP * sizeof(void *);
+    size_t val_sz  = (size_t)DEDUP_CAP * sizeof(thread_hot_t *);
+    // Align each sub-array to 64 bytes (cache line)
+    ctrl_sz = (ctrl_sz + 63) & ~(size_t)63;
+    func_sz = (func_sz + 63) & ~(size_t)63;
+    arg_sz  = (arg_sz + 63) & ~(size_t)63;
+    size_t total = ctrl_sz + func_sz + arg_sz + val_sz;
+
+    char *mem = mmap(NULL, total,
+                     PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+    if (__builtin_expect(mem == MAP_FAILED, 0))
     {
         perror("mmap dedup swiss");
         exit(1);
     }
+    swiss_ctrl     = (int8_t *)mem;
+    swiss_key_func = (func_ptr_t *)(mem + ctrl_sz);
+    swiss_key_arg  = (void **)(mem + ctrl_sz + func_sz);
+    swiss_val      = (thread_hot_t **)(mem + ctrl_sz + func_sz + arg_sz);
     memset(swiss_ctrl, CTRL_EMPTY, DEDUP_CAP);
 }
 
@@ -244,13 +253,13 @@ __attribute__((cold))
 static void dedup_mem_destroy(void)
 {
     if (swiss_ctrl && swiss_ctrl != MAP_FAILED)
-        munmap(swiss_ctrl, (size_t)DEDUP_CAP);
-    if (swiss_key_func && swiss_key_func != MAP_FAILED)
-        munmap(swiss_key_func, (size_t)DEDUP_CAP * sizeof(func_ptr_t));
-    if (swiss_key_arg && swiss_key_arg != MAP_FAILED)
-        munmap(swiss_key_arg, (size_t)DEDUP_CAP * sizeof(void *));
-    if (swiss_val && swiss_val != MAP_FAILED)
-        munmap(swiss_val, (size_t)DEDUP_CAP * sizeof(thread_hot_t *));
+    {
+        size_t ctrl_sz = ((size_t)DEDUP_CAP + 63) & ~(size_t)63;
+        size_t func_sz = ((size_t)DEDUP_CAP * sizeof(func_ptr_t) + 63) & ~(size_t)63;
+        size_t arg_sz  = ((size_t)DEDUP_CAP * sizeof(void *) + 63) & ~(size_t)63;
+        size_t val_sz  = (size_t)DEDUP_CAP * sizeof(thread_hot_t *);
+        munmap(swiss_ctrl, ctrl_sz + func_sz + arg_sz + val_sz);
+    }
     swiss_ctrl = NULL;
     swiss_key_func = NULL;
     swiss_key_arg = NULL;

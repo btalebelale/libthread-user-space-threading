@@ -97,6 +97,8 @@ __attribute__((visibility("hidden"))) thread_hot_t *last_created;
 static void *(*last_created_func)(void *);
 static void *last_created_arg;
 
+__attribute__((visibility("hidden"))) int inline_executing;
+
 #include "dedup.h"
 
 #define THREAD_COLD(hot) (&cold_slab[(hot) - hot_slab])
@@ -109,25 +111,9 @@ __attribute__((noinline, cold, visibility("hidden"))) void flush_last_created_sl
 {
     thread_cold_t *lc = THREAD_COLD(last_created);
 
-    if (__builtin_expect(last_created->rsp == NULL, 1))
-    {
-        void *stack = stack_alloc();
-        if (__builtin_expect(!stack, 0))
-        {
-            lc->retval = last_created_func(last_created_arg);
-            lc->state = FINISHED;
-            lc->func = NULL;
-            lc->func_arg = NULL;
-            last_created = NULL;
-            return;
-        }
-        lc->stack_base = stack;
-        last_created->rsp = stack_init(stack, last_created_func, last_created_arg);
-#ifndef NVALGRIND
-        lc->valgrind_stackid = VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
-#endif
-    }
-
+    // Deferred stack allocation: don't allocate stack here.
+    // Stack will be allocated lazily in yield if thread is actually scheduled,
+    // or skipped entirely if the thread is inline-joined.
     lc->func = last_created_func;
     lc->func_arg = last_created_arg;
     if(dedup_enabled){
@@ -135,6 +121,26 @@ __attribute__((noinline, cold, visibility("hidden"))) void flush_last_created_sl
     }
     sched_enqueue(last_created);
     last_created = NULL;
+}
+
+// Lazy stack allocation: called from yield when next thread has no stack
+__attribute__((noinline, cold, visibility("hidden")))
+void lazy_stack_alloc(thread_hot_t *t)
+{
+    thread_cold_t *tc = THREAD_COLD(t);
+    void *stack = stack_alloc();
+    if (__builtin_expect(!stack, 0))
+    {
+        // No stacks left — run the function inline as fallback
+        tc->retval = tc->func(tc->func_arg);
+        tc->state = FINISHED;
+        return;
+    }
+    tc->stack_base = stack;
+    t->rsp = stack_init(stack, tc->func, tc->func_arg);
+#ifndef NVALGRIND
+    tc->valgrind_stackid = VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
+#endif
 }
 
 static inline __attribute__((always_inline)) void flush_last_created(void)
@@ -240,6 +246,7 @@ static void *exit_rsp;
 
 __attribute__((visibility("hidden"))) void thread_entry(void *(*func)(void *), void *arg)
 {
+    THREAD_COLD(current)->started = 1;
 #ifdef USE_PREEMPTION
     sigset_t mask;
     sigemptyset(&mask);
@@ -381,14 +388,18 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
         {
             if (last_created_func == func && last_created_arg == arg)
             {
+                THREAD_COLD(last_created)->refcount++;
                 *newthread = (thread_t)last_created;
+                preempt_restore(&old);
                 return 0;
             }
         }
         thread_hot_t *existing = dedup_lookup(func, arg);
         if (__builtin_expect(existing != NULL, 0))
         {
+            THREAD_COLD(existing)->refcount++;
             *newthread = (thread_t)existing;
+            preempt_restore(&old);
             return 0;
         }
     }
@@ -406,6 +417,8 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     tc->func = NULL;
     tc->func_arg = NULL;
     tc->inline_jmpbuf = NULL;
+    tc->refcount = 1;
+    tc->started = 0;
     t->rsp = NULL;
 
     flush_last_created();
@@ -425,13 +438,15 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
                                                                                                                                         
 __attribute__((visibility("hidden"))) extern int thread_yield_asm(void);                                                              
 
-__attribute__((visibility("default"))) int thread_yield(void)                                                                         
-{               
+__attribute__((visibility("default"))) int thread_yield(void)
+{
+    if (__builtin_expect(inline_executing > 0, 0))
+        return 0;
     sigset_t old;
     preempt_block(&old);
-    int r = thread_yield_asm();                                                                                                       
+    int r = thread_yield_asm();
     preempt_restore(&old);
-    return r;                                                                                                                         
+    return r;
 }  
 
 #endif
@@ -446,18 +461,19 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
     if (__builtin_expect(tc->state != FINISHED, 1))
     {
-        for (thread_hot_t *p = t; p != NULL; p = THREAD_COLD(p)->joining)                                                             
-        {                                                                                                                             
-            if (p == current)                                                                                                         
-            {                                                                                                                         
+        for (thread_hot_t *p = t; p != NULL; p = THREAD_COLD(p)->joining)
+        {
+            if (p == current)
+            {
                 preempt_restore(&old);
-                return EDEADLK;                                                                                                       
+                return EDEADLK;
             }
-        }                                                                                                                             
+        }
         THREAD_COLD(current)->joining = t;
 
         if (__builtin_expect(last_created == t, 1))
         {
+            // Fast path: thread not yet flushed, no stack allocated
             last_created = NULL;
 
             if (__builtin_expect(t->rsp == NULL, 1))
@@ -469,6 +485,8 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
                 void *(*fn)(void *) = last_created_func;
                 void *ar = last_created_arg;
 
+                tc->started = 1;
+                inline_executing++;
                 jmp_buf jb;
                 if (__builtin_expect(_setjmp(jb) == 0, 1))
                 {
@@ -477,6 +495,7 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
                 }
                 tc->inline_jmpbuf = NULL;
                 tc->state = FINISHED;
+                inline_executing--;
 
                 sched_replace(t, prev);
                 current = prev;
@@ -489,6 +508,45 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
                 __builtin_prefetch(t->rsp, 0, 3);
                 context_switch(&prev->rsp, t->rsp);
             }
+        }
+        else if (__builtin_expect(!tc->started && tc->func != NULL, 0))
+        {
+            // Generalized inline: thread was flushed but never ran
+            flush_last_created();
+            sched_remove(t);
+
+            // Release the unused stack
+            if (tc->stack_base)
+            {
+#ifndef NVALGRIND
+                VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
+#endif
+                stack_release(tc->stack_base);
+                tc->stack_base = NULL;
+            }
+            t->rsp = NULL;
+
+            thread_hot_t *prev = current;
+            current = t;
+            sched_replace(prev, t);
+
+            void *(*fn)(void *) = tc->func;
+            void *ar = tc->func_arg;
+
+            tc->started = 1;
+            inline_executing++;
+            jmp_buf jb;
+            if (__builtin_expect(_setjmp(jb) == 0, 1))
+            {
+                tc->inline_jmpbuf = &jb;
+                tc->retval = fn(ar);
+            }
+            tc->inline_jmpbuf = NULL;
+            tc->state = FINISHED;
+            inline_executing--;
+
+            sched_replace(t, prev);
+            current = prev;
         }
         else
         {
@@ -506,6 +564,9 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
             thread_hot_t *prev = current;
             current = next;
 
+            if (__builtin_expect(next->rsp == NULL, 0))
+                lazy_stack_alloc(next);
+
             context_switch(&prev->rsp, next->rsp);
         }
         THREAD_COLD(current)->joining = NULL;
@@ -514,22 +575,27 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
     if (retval)
         *retval = tc->retval;
 
-    if (__builtin_expect(tc->func != NULL, 1))
+    // Refcount-guarded cleanup
+    tc->refcount--;
+    if (__builtin_expect(tc->refcount == 0, 1))
     {
-        if (dedup_enabled)
-            dedup_remove(tc->func, tc->func_arg);
-        tc->func = NULL;
-    }
+        if (tc->func != NULL)
+        {
+            if (dedup_enabled)
+                dedup_remove(tc->func, tc->func_arg);
+            tc->func = NULL;
+        }
 
-    if (tc->stack_base)
-    {
+        if (tc->stack_base)
+        {
 #ifndef NVALGRIND
-        VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
+            VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
 #endif
-        stack_release(tc->stack_base);
-    }
+            stack_release(tc->stack_base);
+        }
 
-    thread_release(t);
+        thread_release(t);
+    }
     preempt_restore(&old);
 
     return 0;
@@ -553,13 +619,14 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
 
     if (__builtin_expect(cc->waiting != NULL, 1))
     {
-        
-        sched_replace(current, cc->waiting);
-        current = cc->waiting;
-        context_restore(cc->waiting->rsp);
+        thread_hot_t *w = cc->waiting;
+        sched_replace(current, w);
+        current = w;
+        if (__builtin_expect(w->rsp == NULL, 0))
+            lazy_stack_alloc(w);
+        context_restore(w->rsp);
     }
 
-   
     if (__builtin_expect(cc->func != NULL, 1))
     {
         if (dedup_enabled)
@@ -575,6 +642,9 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
     thread_hot_t *next = current->sched_prev;
     sched_remove(current);
     current = next;
+
+    if (__builtin_expect(next->rsp == NULL, 0))
+        lazy_stack_alloc(next);
 
     context_restore(next->rsp);
 }
@@ -634,8 +704,10 @@ __attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mut
     m->wait_tail = me;                                                                                                                
                                                                                                            
     current = next;
+    if (__builtin_expect(next->rsp == NULL, 0))
+        lazy_stack_alloc(next);
     __builtin_prefetch(next->rsp, 0, 3);
-    context_switch(&me->rsp, next->rsp);                                                                                            
+    context_switch(&me->rsp, next->rsp);
     
     preempt_restore(&old);
 

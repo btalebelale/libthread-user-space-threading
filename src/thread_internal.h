@@ -35,6 +35,8 @@ typedef struct thread_cold
     void *(*func)(void *); // pour déduplication
     void *func_arg;        // pour déduplication
     jmp_buf *inline_jmpbuf;
+    uint16_t refcount;
+    uint8_t started;
 } thread_cold_t;
 
 extern thread_hot_t *current;
