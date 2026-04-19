@@ -49,8 +49,6 @@ static int dedup_enabled = 1;
 #ifdef USE_PREEMPTION
                                                                                                                                
 #define PREEMPT_INTERVAL_US 20                                                                                            
-static volatile int preempt_tick_count;
-
 static void preempt_handler(int sig)                                                                                                  
 {               
     (void)sig;  
@@ -301,13 +299,15 @@ __attribute__((cold)) static void clean_exit(void)
 
 __attribute__((cold)) static void thread_system_destroy(void)
 {
-    struct itimerval off;                                                                                                             
+#ifdef USE_PREEMPTION
+    struct itimerval off;
     memset(&off, 0, sizeof(off));
-    setitimer(ITIMER_REAL, &off, NULL);                                                                                               
-    sigset_t mask;                                                                                                                    
-    sigemptyset(&mask);                                                                                                               
-    sigaddset(&mask, SIGALRM);                                                                                                        
+    setitimer(ITIMER_REAL, &off, NULL);
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGALRM);
     sigprocmask(SIG_BLOCK, &mask, NULL);
+#endif
 
     if (current != NULL)
     {

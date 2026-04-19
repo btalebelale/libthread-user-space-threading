@@ -32,9 +32,6 @@ TEST_BINS = tests/01-main \
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
-BENCH_BINS = bench/bench_all
-BENCH_PTHREAD_BINS = $(addsuffix -pthread,$(BENCH_BINS))
-
 all: $(LIB_NAME) $(TEST_BINS)
 
 $(LIB_NAME): $(LIB_OBJ)
@@ -70,21 +67,6 @@ install: all pthreads
 	cp $(TEST_BINS) install/bin/
 	cp $(TEST_PTHREAD_BINS) install/bin/
 
-bench/bench_all: bench/bench_all.c $(LIB_NAME)
-	$(CC) $(CFLAGS) $< -o $@ -L. -lthread
-
-bench/bench_all-pthread: bench/bench_all.c
-	$(CC) $(CFLAGS) -DUSE_PTHREAD $< -o $@ -lpthread
-
-bench: $(BENCH_BINS) $(BENCH_PTHREAD_BINS)
-	@echo "=== libthread ==="
-	LD_LIBRARY_PATH=. ./bench/bench_all 2>bench_thread.csv
-	@echo ""
-	@echo "=== pthread ==="
-	./bench/bench_all-pthread 2>bench_pthread.csv
-	@echo ""
-	@echo "Results saved: bench_thread.csv, bench_pthread.csv"
-
 pgo: clean
 	$(MAKE) all EXTRA_CFLAGS="-fprofile-generate"
 	LD_LIBRARY_PATH=. ./scripts/run_tests.sh
@@ -94,12 +76,10 @@ pgo: clean
 clean:
 	rm -f src/*.o $(LIB_NAME)
 	rm -f $(TEST_BINS) $(TEST_PTHREAD_BINS)
-	rm -f $(BENCH_BINS) $(BENCH_PTHREAD_BINS)
-	rm -f bench_thread.csv bench_pthread.csv bench_aos.csv bench_soa.csv bench_swiss.csv
 	rm -rf install/lib/* install/bin/*
 	rm -rf tests/*.dSYM
 	rm -f src/*.gcda src/*.gcno tests/*.gcda tests/*.gcno
 	rm -f graphs/*.png
 	rm -f perf.data perf.data.old
 
-.PHONY: all clean valgrind check pthreads graphs install pgo bench
+.PHONY: all clean valgrind check pthreads graphs install pgo

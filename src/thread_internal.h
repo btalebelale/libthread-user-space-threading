@@ -2,16 +2,14 @@
 #define __THREAD_INTERNAL_H__
 
 #include "thread.h"
+#include <stddef.h>
 #include <setjmp.h>
 #include <stdint.h>
-#include <stdlib.h>
-
 // Thread states
 typedef enum
 {
     READY,
     RUNNING,
-    BLOCKED,
     FINISHED
 } state_t;
 

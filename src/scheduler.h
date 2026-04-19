@@ -28,15 +28,6 @@ static inline __attribute__((always_inline)) thread_hot_t *sched_dequeue_fifo(vo
     return t;
 }
 
-static inline __attribute__((always_inline)) thread_hot_t *sched_dequeue_lifo(void)
-{
-    // Retirer le thread juste avant current (le plus recent)
-    thread_hot_t *t = current->sched_prev;
-    current->sched_prev = t->sched_prev;
-    t->sched_prev->sched_next = current;
-    return t;
-}
-
 static inline __attribute__((always_inline)) int is_sched_empty(void)
 {
     // current est seul dans la liste
