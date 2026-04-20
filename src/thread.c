@@ -347,7 +347,7 @@ __attribute__((constructor, cold)) static void init_system(void)
     current->sched_prev = current;
 
     thread_cold_t *cc = THREAD_COLD(current);
-    cc->state = RUNNING;
+    cc->state = READY;
     cc->stack_base = NULL;
     cc->retval = NULL;
     cc->waiting = NULL;
@@ -499,14 +499,6 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
                 sched_replace(t, prev);
                 current = prev;
-            }
-            else
-            {
-                tc->waiting = current;
-                thread_hot_t *prev = current;
-                current = t;
-                __builtin_prefetch(t->rsp, 0, 3);
-                context_switch(&prev->rsp, t->rsp);
             }
         }
         else if (__builtin_expect(!tc->started && tc->func != NULL, 0))
@@ -680,8 +672,9 @@ __attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mut
     mutex_internal_t *m = MUTEX(mutex);                                                                                               
                                                                                                                                         
     if (__builtin_expect(!m->locked, 1))
-    {                                                                                                                                 
+    {
         m->locked = 1;
+        preempt_restore(&old); // test 72
         return 0;
     }
 

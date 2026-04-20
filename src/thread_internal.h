@@ -9,7 +9,6 @@
 typedef enum
 {
     READY,
-    RUNNING,
     FINISHED
 } state_t;
 

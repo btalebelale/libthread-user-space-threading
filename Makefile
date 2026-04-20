@@ -46,6 +46,9 @@ tests/%: tests/%.c $(LIB_NAME)
 tests/71-preemption: tests/71-preemption.c $(LIB_SRC_C) $(LIB_SRC_S)
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PREEMPTION $^ -o $@
 
+tests/72-preemption-mutex-bug: tests/72-preemption-mutex-bug.c $(LIB_SRC_C) $(LIB_SRC_S)
+	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PREEMPTION $^ -o $@
+
 pthreads: $(TEST_PTHREAD_BINS)
 
 tests/%-pthread: tests/%.c
