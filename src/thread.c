@@ -664,7 +664,7 @@ __attribute__((visibility("default"))) int thread_mutex_destroy(thread_mutex_t *
 }
 
 
-__attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mutex)
+__attribute__((visibility("default"), hot)) int thread_mutex_lock(thread_mutex_t *mutex)
 {
     sigset_t old;                                                                                                                     
     preempt_block(&old);
@@ -677,8 +677,6 @@ __attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mut
         preempt_restore(&old); // test 72
         return 0;
     }
-
-    flush_last_created();
 
     if (__builtin_expect(is_sched_empty(), 0)){
         preempt_restore(&old);
@@ -697,8 +695,6 @@ __attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mut
     m->wait_tail = me;                                                                                                                
                                                                                                            
     current = next;
-    if (__builtin_expect(next->rsp == NULL, 0))
-        lazy_stack_alloc(next);
     __builtin_prefetch(next->rsp, 0, 3);
     context_switch(&me->rsp, next->rsp);
     
@@ -708,7 +704,7 @@ __attribute__((visibility("default"))) int thread_mutex_lock(thread_mutex_t *mut
 }
 
 
-__attribute__((visibility("default"))) int thread_mutex_unlock(thread_mutex_t *mutex)
+__attribute__((visibility("default"), hot)) int thread_mutex_unlock(thread_mutex_t *mutex)
 {
     sigset_t old;                                                                                                                     
     preempt_block(&old);
