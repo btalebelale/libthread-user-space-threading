@@ -29,6 +29,7 @@
 #define STACK_CAP (1073741824 / STACK_SIZE)
 
 #define THREAD_CAP 262144
+#define SEM(s) ((sem_internal_t *)(s))
 
 static void *stack_arena;
 static int stack_arena_next;
@@ -727,4 +728,81 @@ __attribute__((visibility("default"), hot)) int thread_mutex_unlock(thread_mutex
     preempt_restore(&old);
 
     return 0;     
+}
+
+
+
+__attribute__((visibility("default"), hot))int thread_sem_init(thread_sem_t *sem, int value)
+{
+    sem_internal_t *s = SEM(sem);
+    s->count     = value;
+    s->wait_head = NULL;
+    s->wait_tail = NULL;
+    return 0;
+}
+
+__attribute__((visibility("default"), hot)) int thread_sem_destroy(thread_sem_t *sem)
+{
+    (void)sem;
+    return 0;
+}
+
+__attribute__((visibility("default"), hot)) int thread_sem_wait(thread_sem_t *sem)
+{
+    sigset_t old;
+    preempt_block(&old); //bloque la préemption
+
+    sem_internal_t *s = SEM(sem);
+    s->count--;
+
+    if (s->count >= 0) { // ressource disponible, on passe directement
+        preempt_restore(&old);
+        return 0;
+    }
+    //tout le reste si count < 0 :pas de ressources disponibles, on doit se bloquer
+    
+    if (is_sched_empty()) { //si la file de l'ordonnanceur est vide, on ne peut pas se bloquer et on retourne une erreur
+        preempt_restore(&old);
+        return -1;
+    }
+
+    thread_hot_t *me   = current;
+    thread_hot_t *next = current->sched_prev;
+    sched_remove(current);
+
+    me->sched_next = NULL;
+    if (s->wait_tail == NULL)
+        s->wait_head = me;
+    else
+        s->wait_tail->sched_next = me;
+    s->wait_tail = me;
+
+    current = next;
+    if (__builtin_expect(next->rsp == NULL, 0))
+        lazy_stack_alloc(next);
+    context_switch(&me->rsp, next->rsp);
+
+    preempt_restore(&old);
+    return 0;
+}
+
+__attribute__((visibility("default"), hot)) int thread_sem_post(thread_sem_t *sem)
+{
+    sigset_t old;
+    preempt_block(&old);//bloque la préemption
+
+    sem_internal_t *s = SEM(sem);
+    s->count++;
+
+    if (s->count <= 0) {
+        /* il y a un thread en attente : le réveiller */
+        thread_hot_t *w = s->wait_head;
+        s->wait_head = w->sched_next;
+        if (s->wait_head == NULL)
+            s->wait_tail = NULL;
+        sched_enqueue(w);
+    }
+
+    preempt_restore(&old);
+    return 0;
 }

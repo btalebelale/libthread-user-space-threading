@@ -39,7 +39,9 @@ typedef struct thread_cold
 extern thread_hot_t *current;
 
 __attribute__((visibility("hidden"))) extern void context_switch(void **old_rsp, void *new_rsp);
+
 __attribute__((visibility("hidden"), __noreturn__)) extern void context_restore(void *new_rsp);
+
 __attribute__((visibility("hidden"))) extern void thread_trampoline(void);
 
 
@@ -50,5 +52,11 @@ typedef struct mutex_internal
     thread_hot_t *wait_tail;  // dernier thread en attente                                                                                                       
 } mutex_internal_t; 
 
+
+typedef struct sem_internal {
+    int              count;      // valeur courante du sémaphore
+    thread_hot_t    *wait_head;  // FIFO des threads bloqués             
+    thread_hot_t    *wait_tail;
+} sem_internal_t;
 
 #endif
