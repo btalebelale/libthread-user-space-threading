@@ -6,32 +6,24 @@ import os
 graphs_dir = "graphs"
 os.makedirs(graphs_dir, exist_ok=True)
 
-tests = []
+tests = ["51-fibonacci"]
 
-for f in os.listdir("tests"):
-    path = os.path.join("tests", f)
+#for f in os.listdir("tests"):
+ #   path = os.path.join("tests", f)
 
-    if os.path.isfile(path) and os.access(path, os.X_OK):
-        if not f.endswith("-pthread"):
-            if os.path.exists(os.path.join("tests", f + "-pthread")):
-                tests.append(f)
+ #   if os.path.isfile(path) and os.access(path, os.X_OK):
+  #      if not f.endswith("-pthread"):
+   #         if os.path.exists(os.path.join("tests", f + "-pthread")):
+    #            tests.append(f)
+#tests.sort()
 
-tests.sort()
+#thread_counts = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100,105, 110, 115, 120]
+thread_counts = [4,5,6,7,8,9,10,12,14,16,18,20]
 
-test_args = {
-      "21-create-many": [1, 5, 10, 50, 100, 500, 1000],
-      "22-create-many-recursive": [1, 5, 10, 50, 100, 200],
-      "23-create-many-once": [1, 5, 10, 50, 100, 500, 1000],
-      "31-switch-many": [1, 5, 10, 20, 50],
-      "32-switch-many-join": [1, 5, 10, 20, 50],
-      "33-switch-many-cascade": [1, 5, 10, 20],
-      "51-fibonacci": [5, 10, 15, 20, 25],
-  }
 
 for test in tests:
-    counts = test_args.get(test)
-    if not counts:
-        continue
+    #if test == "51-fibonacci":
+    #    continue
     my_times = []
     pthread_times = []
     for n in counts:
@@ -57,9 +49,10 @@ for test in tests:
         end = time.time()
         pthread_times.append(end - start)
     plt.figure()
-    plt.plot(counts, my_times, marker='o', label='libthread')
-    plt.plot(counts, pthread_times, marker='s', label='pthread')
-    plt.xlabel("Argument")
+    plt.plot(thread_counts, my_times, marker='o', label='libthread')
+    plt.plot(thread_counts, pthread_times, marker='s', label='pthread')
+
+    plt.xlabel("Paramètre de fibonacci")
     plt.ylabel("Temps (s)")
     plt.title(f"Performance {test}")
     plt.legend()
