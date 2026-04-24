@@ -43,7 +43,6 @@ static int thread_slab_next;
 static thread_hot_t *thread_free_head;
 
 
-static int dedup_enabled = 1;
 
 
 // La préemption
@@ -98,7 +97,9 @@ static void *last_created_arg;
 
 __attribute__((visibility("hidden"))) int inline_executing;
 
+#ifdef FP
 #include "dedup.h"
+#endif
 
 #define THREAD_COLD(hot) (&cold_slab[(hot) - hot_slab])
 
@@ -115,9 +116,9 @@ __attribute__((noinline, cold, visibility("hidden"))) void flush_last_created_sl
     // or skipped entirely if the thread is inline-joined.
     lc->func = last_created_func;
     lc->func_arg = last_created_arg;
-    if(dedup_enabled){
-        dedup_insert(last_created_func, last_created_arg, last_created);
-    }
+#ifdef FP
+    dedup_insert(last_created_func, last_created_arg, last_created);
+#endif
     sched_enqueue(last_created);
     last_created = NULL;
 }
@@ -175,7 +176,9 @@ __attribute__((cold)) static void mem_init(void)
         exit(1);
     }
 
+#ifdef FP
     dedup_mem_init();
+#endif
 
     stack_arena_next = 0;
     stack_free_head = NULL;
@@ -191,7 +194,9 @@ __attribute__((cold)) static void mem_destroy(void)
         munmap(hot_slab, (size_t)THREAD_CAP * sizeof(thread_hot_t));
     if (cold_slab && cold_slab != MAP_FAILED)
         munmap(cold_slab, (size_t)THREAD_CAP * sizeof(thread_cold_t));
+#ifdef FP
     dedup_mem_destroy();
+#endif
     stack_arena = NULL;
     hot_slab = NULL;
     cold_slab = NULL;
@@ -384,26 +389,26 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     sigset_t old;                                                                                                                     
     preempt_block(&old);
 
-    if (__builtin_expect(dedup_enabled, 1)){
-        if (__builtin_expect(last_created != NULL, 0))
+#ifdef FP
+    if (__builtin_expect(last_created != NULL, 0))
+    {
+        if (last_created_func == func && last_created_arg == arg)
         {
-            if (last_created_func == func && last_created_arg == arg)
-            {
-                THREAD_COLD(last_created)->refcount++;
-                *newthread = (thread_t)last_created;
-                preempt_restore(&old);
-                return 0;
-            }
-        }
-        thread_hot_t *existing = dedup_lookup(func, arg);
-        if (__builtin_expect(existing != NULL, 0))
-        {
-            THREAD_COLD(existing)->refcount++;
-            *newthread = (thread_t)existing;
+            THREAD_COLD(last_created)->refcount++;
+            *newthread = (thread_t)last_created;
             preempt_restore(&old);
             return 0;
         }
     }
+    thread_hot_t *existing = dedup_lookup(func, arg);
+    if (__builtin_expect(existing != NULL, 0))
+    {
+        THREAD_COLD(existing)->refcount++;
+        *newthread = (thread_t)existing;
+        preempt_restore(&old);
+        return 0;
+    }
+#endif
 
     thread_hot_t *t = thread_alloc();
     if (__builtin_expect(!t, 0))
@@ -574,8 +579,9 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
     {
         if (tc->func != NULL)
         {
-            if (dedup_enabled)
-                dedup_remove(tc->func, tc->func_arg);
+#ifdef FP
+            dedup_remove(tc->func, tc->func_arg);
+#endif
             tc->func = NULL;
         }
 
@@ -622,8 +628,9 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
 
     if (__builtin_expect(cc->func != NULL, 1))
     {
-        if (dedup_enabled)
-            dedup_remove(cc->func, cc->func_arg);
+#ifdef FP
+        dedup_remove(cc->func, cc->func_arg);
+#endif
         cc->func = NULL;
     }
 
@@ -649,7 +656,6 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
 
 __attribute__((visibility("default"))) int thread_mutex_init(thread_mutex_t *mutex)
 {
-    dedup_enabled = 0;
     mutex_internal_t *m = MUTEX(mutex);
     m->locked = 0;                                                                                                                    
     m->wait_head = NULL;
