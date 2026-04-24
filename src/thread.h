@@ -14,8 +14,8 @@ typedef void *thread_t;
  */
 extern thread_t thread_self(void);
 
-/* creer un nouveau thread qui va exécuter la fonction func avec l'argument funcarg.
- * renvoie 0 en cas de succès, -1 en cas d'erreur.
+/* creer un nouveau thread qui va exécuter la fonction func avec l'argument
+ * funcarg. renvoie 0 en cas de succès, -1 en cas d'erreur.
  */
 extern int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg);
 
@@ -42,31 +42,18 @@ extern void thread_exit(void *retval) __attribute__((__noreturn__));
 /* Interface possible pour les mutex */
 typedef struct thread_mutex
 {
-    int __opaque[32];
+    char __opaque[32];
 } thread_mutex_t;
 int thread_mutex_init(thread_mutex_t *mutex);
 int thread_mutex_destroy(thread_mutex_t *mutex);
 int thread_mutex_lock(thread_mutex_t *mutex);
 int thread_mutex_unlock(thread_mutex_t *mutex);
 
-/* Interface pour les sémaphores */
-typedef struct thread_sem {
-    int __opaque[32];
-} thread_sem_t;
-
-int thread_sem_init(thread_sem_t *sem, int value);
-int thread_sem_destroy(thread_sem_t *sem);
-int thread_sem_wait(thread_sem_t *sem);   /* P() — décrémente, bloque si < 0 */
-int thread_sem_post(thread_sem_t *sem);   /* V() — incrémente, réveille si waiter */
-
-
 #else /* USE_PTHREAD */
 
 /* Si on compile avec -DUSE_PTHREAD, ce sont les pthreads qui sont utilisés */
 #include <pthread.h>
 #include <sched.h>
-#include <semaphore.h>
-
 #define thread_t pthread_t
 #define thread_self pthread_self
 #define thread_create(th, func, arg) pthread_create(th, NULL, func, arg)
@@ -80,12 +67,6 @@ int thread_sem_post(thread_sem_t *sem);   /* V() — incrémente, réveille si w
 #define thread_mutex_destroy pthread_mutex_destroy
 #define thread_mutex_lock pthread_mutex_lock
 #define thread_mutex_unlock pthread_mutex_unlock
-
-#define thread_sem_t      sem_t
-#define thread_sem_init(s, v) sem_init(s, 0, v)
-#define thread_sem_destroy    sem_destroy
-#define thread_sem_wait       sem_wait
-#define thread_sem_post       sem_post
 
 #endif /* USE_PTHREAD */
 

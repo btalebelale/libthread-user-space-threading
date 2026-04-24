@@ -1,8 +1,32 @@
 #include "scheduler.h"
+#include "thread_internal.h"
 
-thread_hot_t *current __attribute__((aligned(64))) = NULL;
+#include <stdlib.h>
 
-void sched_init(void)
+STAILQ_HEAD(thread_queue, thread);
+
+static struct thread_queue ready_queue;
+
+thread_m *current = NULL;
+
+void sched_init()
 {
-    // current sera initialisé dans init_system
+    STAILQ_INIT(&ready_queue);
+}
+
+void sched_enqueue(thread_m *t)
+{
+    STAILQ_INSERT_TAIL(&ready_queue, t, link);
+}
+
+int is_sched_empty(void)
+{
+    return STAILQ_EMPTY(&ready_queue);
+}
+
+thread_m *sched_dequeue(void)
+{
+    thread_m *first = STAILQ_FIRST(&ready_queue);
+    STAILQ_REMOVE_HEAD(&ready_queue, link);
+    return first;
 }

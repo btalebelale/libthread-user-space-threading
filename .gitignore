@@ -4,8 +4,7 @@
 
 *-pthread
 
-tests/*
-!tests/*.c
+tests/[0-9][0-9]-*
 
 install/bin/*
 install/lib/*
@@ -23,5 +22,3 @@ install/lib/*
 
 *.csv
 *.png
-
-profile_results/
