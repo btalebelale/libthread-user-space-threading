@@ -2,43 +2,61 @@
 #define __THREAD_INTERNAL_H__
 
 #include "thread.h"
+#include <stddef.h>
 #include <setjmp.h>
-#include <stdlib.h>
-#include <sys/queue.h>
-
+#include <stdint.h>
 // Thread states
 typedef enum
 {
     READY,
-    RUNNING,
-    BLOCKED,
     FINISHED
 } state_t;
 
-typedef struct thread
+// HOT : touché à chaque yield
+typedef struct thread_hot
 {
-    jmp_buf env;       // sauvegarde les registres du thread
-    void *stack;       // pile du thread
-    size_t stack_size; // la taille
+    void *rsp;
+    struct thread_hot *sched_next;
+    struct thread_hot *sched_prev;
+} thread_hot_t;
 
-    void *retval;           // Thread's return value
-    state_t state;          // Current state of the thread
-    int valgrind_stackid;   // Valgrind ID to register/deregister the custom stack
-    struct thread *waiting; // Pointer to the thread waiting for this one to join
+// COLD : touché uniquement à create/join/exit
+typedef struct thread_cold
+{
+    void *retval;
+    void *stack_base;
+    struct thread_hot *waiting;
+    struct thread_hot *joining; // le thread que j'attende
+    uint32_t state;
+    int valgrind_stackid;
+    void *(*func)(void *); // pour déduplication
+    void *func_arg;        // pour déduplication
+    jmp_buf *inline_jmpbuf;
+    uint16_t refcount;
+    uint8_t started;
+} thread_cold_t;
 
-    void *(*func)(void *);
-    void *func_arg;
+extern thread_hot_t *current;
 
-    STAILQ_ENTRY(thread) link; // Le next du thread
-} thread_m;
+__attribute__((visibility("hidden"))) extern void context_switch(void **old_rsp, void *new_rsp);
+
+__attribute__((visibility("hidden"), __noreturn__)) extern void context_restore(void *new_rsp);
+
+__attribute__((visibility("hidden"))) extern void thread_trampoline(void);
 
 
-typedef struct thread_mutex_internal{
-    int locked;  
-    STAILQ_HEAD(, thread) waiting;  // une file de threads bloqués sur ce mutex
-} thread_mutex_m;
+typedef struct mutex_internal                                                                                                         
+{                            
+    int locked;                                                                                                                       
+    thread_hot_t *wait_head;  // premier thread en attente
+    thread_hot_t *wait_tail;  // dernier thread en attente                                                                                                       
+} mutex_internal_t; 
 
-// Global pointer to the currently running thread
-extern thread_m *current;
+
+typedef struct sem_internal {
+    int              count;      // valeur courante du sémaphore
+    thread_hot_t    *wait_head;  // FIFO des threads bloqués             
+    thread_hot_t    *wait_tail;
+} sem_internal_t;
 
 #endif

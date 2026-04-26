@@ -42,11 +42,15 @@ run_test ./tests/62-mutex 100
 run_test ./tests/63-mutex-equity
 run_test ./tests/64-mutex-join
 
+echo "===== SEMAPHORES ==========="
+run_test ./tests/64-sem
+run_test ./tests/65-sem-prodcons
+
 echo "===== PREEMPTION =========="
 run_test ./tests/71-preemption 100
 
-#echo "===== DEADLOCK ============"
-#run_test ./tests/81-deadlock
+echo "===== DEADLOCK ============"
+run_test ./tests/81-deadlock
 
 echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}TOUS LES TESTS SONT PASSÉS AVEC SUCCÈS !${NC}"
