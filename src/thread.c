@@ -497,16 +497,6 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
     if (__builtin_expect(tc->state != FINISHED, 1))
     {
-        /*for (thread_hot_t *p = t; p != NULL; p = THREAD_COLD(p)->joining)
-        {
-            if (p == current)
-            {
-                preempt_restore(&old);
-                return EDEADLK;
-            }
-        }
-        THREAD_COLD(current)->joining = t;*/
-
         if(uf_union(THREAD_COLD(current), tc) == -1) {
             preempt_restore(&old);
             return EDEADLK;
