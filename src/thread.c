@@ -357,7 +357,9 @@ __attribute__((constructor, cold)) static void init_system(void)
     cc->stack_base = NULL;
     cc->retval = NULL;
     cc->waiting = NULL;
-    cc->joining = NULL;
+
+    cc->daddy = cc;
+    cc->rank = 0;
     cc->func = NULL;
     cc->func_arg = NULL;
     cc->inline_jmpbuf = NULL;
@@ -419,7 +421,10 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     tc->state = READY;
     tc->retval = NULL;
     tc->waiting = NULL;
-    tc->joining = NULL;
+
+    tc->daddy = tc;
+    tc->rank = 0;
+
     tc->func = NULL;
     tc->func_arg = NULL;
     tc->inline_jmpbuf = NULL;
@@ -457,6 +462,31 @@ __attribute__((visibility("default"))) int thread_yield(void)
 
 #endif
 
+
+thread_cold_t *uf_find(thread_cold_t *t){
+    while(t->daddy != t){
+        t = t->daddy = t->daddy->daddy;
+    }   
+    return t;
+}
+
+int uf_union(thread_cold_t *a, thread_cold_t *b){
+    a = uf_find(a);
+    b = uf_find(b);
+
+    if(a == b) return -1; //deadlock
+
+    while(a->rank < b->rank){
+        thread_cold_t *tmp = a; 
+        a = b; 
+        b = tmp;
+    }
+    
+    b->daddy = a;
+    if(a->rank == b->rank) a->rank++;
+    return 0;
+}
+
 __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, void **retval)
 {
     sigset_t old;
@@ -467,7 +497,7 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
     if (__builtin_expect(tc->state != FINISHED, 1))
     {
-        for (thread_hot_t *p = t; p != NULL; p = THREAD_COLD(p)->joining)
+        /*for (thread_hot_t *p = t; p != NULL; p = THREAD_COLD(p)->joining)
         {
             if (p == current)
             {
@@ -475,7 +505,12 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
                 return EDEADLK;
             }
         }
-        THREAD_COLD(current)->joining = t;
+        THREAD_COLD(current)->joining = t;*/
+
+        if(uf_union(THREAD_COLD(current), tc) == -1) {
+            preempt_restore(&old);
+            return EDEADLK;
+        }
 
         if (__builtin_expect(last_created == t, 1))
         {
@@ -567,7 +602,6 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
             context_switch(&prev->rsp, next->rsp);
         }
-        THREAD_COLD(current)->joining = NULL;
     }
 
     if (retval)

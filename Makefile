@@ -48,6 +48,9 @@ tests/%: tests/%.c $(LIB_NAME)
 tests/51-fibonacci: tests/51-fibonacci.c $(LIB_SRC_C) $(LIB_SRC_S)
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DFP $^ -o $@
 
+tests/23-create-many-once: tests/23-create-many-once.c $(LIB_SRC_C) $(LIB_SRC_S)
+	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DFP $^ -o $@
+
 tests/71-preemption: tests/71-preemption.c $(LIB_SRC_C) $(LIB_SRC_S)
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PREEMPTION $^ -o $@
 
