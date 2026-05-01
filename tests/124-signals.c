@@ -11,8 +11,7 @@ void *waiter(void *arg)
     (void)arg;
     int sig = -1;
     printf("waiter: appel thread_sigwait, masque = 0b00000110 (sigs 1 et 2)\n");
-    int r = thread_sigwait(0b00000110, &sig);
-    assert(r == 0);
+    assert(thread_sigwait(0b00000110, &sig) == 0);
     printf("waiter: réveillé par signal %d\n", sig);
     assert(sig == 2);
     return NULL;

@@ -847,7 +847,7 @@ __attribute__((visibility("default"), hot)) int thread_sem_post(thread_sem_t *se
 }
 
 // Signaux 
-int thread_kill(thread_t target, int sig)
+__attribute__((visibility("default"))) int thread_kill(thread_t target, int sig)
 {
     if (sig < 1 || sig > 7)
         return -1;  /* signal invalide pour notre uint8_t */
@@ -881,7 +881,7 @@ int thread_kill(thread_t target, int sig)
     return 0;
 }
 
-int thread_sigwait(thread_sigset_t mask, int *sig)
+__attribute__((visibility("default"))) int thread_sigwait(thread_sigset_t mask, int *sig)
 {
     sigset_t old;
     preempt_block(&old);
