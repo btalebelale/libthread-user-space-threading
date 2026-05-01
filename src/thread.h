@@ -71,6 +71,7 @@ int thread_sigwait(thread_sigset_t mask, int *sig);
 #include <pthread.h>
 #include <sched.h>
 #include <semaphore.h>
+#include <signal.h>
 
 #define thread_t pthread_t
 #define thread_self pthread_self
@@ -91,6 +92,9 @@ int thread_sigwait(thread_sigset_t mask, int *sig);
 #define thread_sem_destroy    sem_destroy
 #define thread_sem_wait       sem_wait
 #define thread_sem_post       sem_post
+
+#define thread_kill(target, sig)      pthread_kill(target, sig)
+#define thread_sigwait(mask, sig)     (-1)
 
 #endif /* USE_PTHREAD */
 
