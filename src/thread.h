@@ -1,5 +1,8 @@
 #ifndef __THREAD_H__
 #define __THREAD_H__
+#include <stdint.h>
+
+typedef uint8_t thread_sigset_t;   /* bits 1..7 = signaux 1..7 */
 
 #ifndef USE_PTHREAD
 
@@ -59,7 +62,9 @@ int thread_sem_destroy(thread_sem_t *sem);
 int thread_sem_wait(thread_sem_t *sem);   /* P() — décrémente, bloque si < 0 */
 int thread_sem_post(thread_sem_t *sem);   /* V() — incrémente, réveille si waiter */
 
-
+/* Interface pour la gestion des signaux */
+int thread_kill(thread_t target, int sig);
+int thread_sigwait(thread_sigset_t mask, int *sig);
 #else /* USE_PTHREAD */
 
 /* Si on compile avec -DUSE_PTHREAD, ce sont les pthreads qui sont utilisés */

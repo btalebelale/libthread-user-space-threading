@@ -363,6 +363,11 @@ __attribute__((constructor, cold)) static void init_system(void)
     cc->func = NULL;
     cc->func_arg = NULL;
     cc->inline_jmpbuf = NULL;
+    // Signaux
+    cc->pending_sigs = 0;
+    cc->wait_mask    = 0;
+    cc->sig_waiting  = 0;
+    cc->received_sig = 0;
 
     uintptr_t sp = (uintptr_t)(exit_stack + sizeof(exit_stack));
     sp &= ~(uintptr_t)0xF;
@@ -431,7 +436,11 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     tc->refcount = 1;
     tc->started = 0;
     t->rsp = NULL;
-
+    //signaux
+    tc->pending_sigs = 0;
+    tc->wait_mask    = 0;
+    tc->sig_waiting  = 0;
+    tc->received_sig = 0;
     flush_last_created();
     last_created = t;
     last_created_func = func;
@@ -836,3 +845,90 @@ __attribute__((visibility("default"), hot)) int thread_sem_post(thread_sem_t *se
     preempt_restore(&old);
     return 0;
 }
+
+// Signaux 
+int thread_kill(thread_t target, int sig)
+{
+    if (sig < 1 || sig > 7)
+        return -1;  /* signal invalide pour notre uint8_t */
+
+    sigset_t old;
+    preempt_block(&old);
+
+    thread_hot_t  *t  = (thread_hot_t *)target;
+    thread_cold_t *tc = THREAD_COLD(t);
+
+    thread_sigset_t bit = (thread_sigset_t)(1u << sig);
+
+    /* Déposer le signal dans le pending du thread cible */
+    tc->pending_sigs |= bit;
+
+    /* Le thread cible est-il bloqué dans thread_sigwait
+     * et attend-il justement ce signal ? */
+    if (tc->sig_waiting && (tc->wait_mask & bit))
+    {
+        /* Consommer le signal et noter lequel a réveillé le thread */
+        tc->pending_sigs  &= ~bit;
+        tc->received_sig   = sig;
+        tc->sig_waiting    = 0;
+        tc->wait_mask      = 0;
+
+        /* Remettre le thread dans la file de l'ordonnanceur */
+        sched_enqueue(t);
+    }
+
+    preempt_restore(&old);
+    return 0;
+}
+
+int thread_sigwait(thread_sigset_t mask, int *sig)
+{
+    sigset_t old;
+    preempt_block(&old);
+
+    thread_cold_t *cc = THREAD_COLD(current);
+
+    /* Vérifie si un signal attendu est déjà pending (livraison immédiate) */
+    thread_sigset_t hit = cc->pending_sigs & mask;
+    if (hit)
+    {
+        /* Prendre le signal de plus faible numéro (bit le moins significatif) */
+        int s = __builtin_ctz(hit);  /* count trailing zeros → numéro du bit */
+        cc->pending_sigs &= ~(thread_sigset_t)(1u << s); /*vider ce bit */
+        if (sig)
+            *sig = s;
+        preempt_restore(&old);
+        return 0;
+    }
+
+    /* Aucun signal disponible : se bloquer */
+    if (is_sched_empty())
+    {   preempt_restore(&old);
+        return -1;
+    }
+
+    /* Enregistrer l'attente */
+    cc->wait_mask   = mask;
+    cc->sig_waiting = 1; // on est bloque dans sigwait
+
+    /* Se retirer de la file et passer la main au suivant */
+    thread_hot_t *me   = current;
+    thread_hot_t *next = current->sched_prev;
+    sched_remove(current);
+
+    current = next;
+
+    if (__builtin_expect(next->rsp == NULL, 0))
+        lazy_stack_alloc(next);
+
+    context_switch(&me->rsp, next->rsp);
+
+    /* On reprend ici quand thread_kill nous a réveillé */
+    if (sig)
+        *sig = cc->received_sig;
+
+    preempt_restore(&old);
+    return 0;
+}
+
+

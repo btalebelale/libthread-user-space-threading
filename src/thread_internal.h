@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <setjmp.h>
 #include <stdint.h>
+
 // Thread states
 typedef enum
 {
@@ -37,6 +38,10 @@ typedef struct thread_cold
     jmp_buf *inline_jmpbuf;
     uint16_t refcount;
     uint8_t started;
+    thread_sigset_t pending_sigs;  // bitmask: signaux reçus, pas encore consommés
+    thread_sigset_t wait_mask;     // bitmask: signaux attendus par thread_sigwait
+    uint8_t sig_waiting;           // 1 si le thread est bloqué dans thread_sigwait
+    int     received_sig;          // numéro du signal qui l'a réveillé
 } thread_cold_t;
 
 extern thread_hot_t *current;

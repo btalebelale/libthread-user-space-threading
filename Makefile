@@ -30,8 +30,9 @@ TEST_BINS = tests/01-main \
 			tests/64-sem \
 			tests/65-sem-prodcons \
             tests/71-preemption  \
-            tests/81-deadlock
-
+            tests/81-deadlock\
+			tests/82-deadlock-avoidance \
+			tests/124-signals
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
 all: $(LIB_NAME) $(TEST_BINS)
