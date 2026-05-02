@@ -351,14 +351,16 @@ __attribute__((constructor, cold)) static void init_system(void)
     current->rsp = NULL;
     current->sched_next = current;
     current->sched_prev = current;
+    current->priority = THREAD_PRIORITY_DEFAULT;
 
     thread_cold_t *cc = THREAD_COLD(current);
     cc->state = READY;
+
     cc->stack_base = NULL;
     cc->retval = NULL;
     cc->waiting = NULL;
 
-    cc->daddy = cc;
+    cc->parent = cc;
     cc->rank = 0;
     cc->func = NULL;
     cc->func_arg = NULL;
@@ -427,7 +429,7 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     tc->retval = NULL;
     tc->waiting = NULL;
 
-    tc->daddy = tc;
+    tc->parent = tc;
     tc->rank = 0;
 
     tc->func = NULL;
@@ -436,6 +438,7 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     tc->refcount = 1;
     tc->started = 0;
     t->rsp = NULL;
+    t->priority = THREAD_PRIORITY_DEFAULT;
     //signaux
     tc->pending_sigs = 0;
     tc->wait_mask    = 0;
@@ -452,9 +455,63 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     return 0;
 }
 
-// thread_yield_asm est implémenté dans context_switch.S
+__attribute__((visibility("default"))) int thread_setpriority(thread_t thread, int priority)                                          
+{               
+    if (priority < THREAD_PRIORITY_MIN || priority > THREAD_PRIORITY_MAX)
+        return -1;                                                                                                                    
+    thread_hot_t *t = (thread_hot_t *)thread;
+    t->priority = priority;                                                                                                           
+    return 0;   
+}
 
-#ifdef USE_PREEMPTION
+__attribute__((visibility("default"))) int thread_getpriority(thread_t thread, int *priority)                                         
+{               
+    if (!priority)
+        return -1;
+    thread_hot_t *t = (thread_hot_t *)thread;
+    *priority = t->priority;                                                                                                          
+    return 0;
+}
+
+
+// thread_yield_asm est implémenté dans context_switch.S
+#if defined(USE_PRIORITY)
+
+__attribute__((visibility("hidden"))) extern int thread_yield_asm(void);                                                              
+ 
+__attribute__((visibility("default"))) int thread_yield(void)                                                                         
+{               
+    if (__builtin_expect(inline_executing > 0, 0))
+        return 0;                                                                                                                     
+ 
+    sigset_t old;                                                                                                                     
+    preempt_block(&old);
+    flush_last_created();
+                                                                                                                                      
+    if (is_sched_empty())
+    {                                                                                                                                 
+        preempt_restore(&old);
+        return 0;
+    }
+    thread_hot_t *best = sched_pick_highest();                                                                                        
+ 
+    if (best->priority < current->priority)                                                                                           
+    {           
+        preempt_restore(&old);
+        return 0;                                                                                                                     
+    }
+                                                                                                                                      
+    thread_hot_t *prev = current;
+    current = best;
+    if (__builtin_expect(best->rsp == NULL, 0))                                                                                       
+        lazy_stack_alloc(best);
+                                                                                                                                      
+    context_switch(&prev->rsp, best->rsp);
+    preempt_restore(&old);
+    return 0;
+}
+
+#elif defined(USE_PREEMPTION)
                                                                                                                                         
 __attribute__((visibility("hidden"))) extern int thread_yield_asm(void);                                                              
 
@@ -473,8 +530,8 @@ __attribute__((visibility("default"))) int thread_yield(void)
 
 
 thread_cold_t *uf_find(thread_cold_t *t){
-    while(t->daddy != t){
-        t = t->daddy = t->daddy->daddy;
+    while(t->parent != t){
+        t = t->parent = t->parent->parent;
     }   
     return t;
 }
@@ -491,7 +548,7 @@ int uf_union(thread_cold_t *a, thread_cold_t *b){
         b = tmp;
     }
     
-    b->daddy = a;
+    b->parent = a;
     if(a->rank == b->rank) a->rank++;
     return 0;
 }
@@ -589,8 +646,12 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
                 preempt_restore(&old);
                 return -1;
             }
-
+#ifdef USE_PRIORITY
+            thread_hot_t *next = sched_pick_highest();
+#else 
             thread_hot_t *next = current->sched_prev;
+#endif
+
             sched_remove(current);
 
             thread_hot_t *prev = current;
@@ -672,7 +733,12 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
     if (__builtin_expect(is_sched_empty(), 0))
         context_restore(exit_rsp);
 
+#ifdef USE_PRIORITY
+    thread_hot_t *next = sched_pick_highest();
+#else 
     thread_hot_t *next = current->sched_prev;
+#endif
+
     sched_remove(current);
     current = next;
 
@@ -722,9 +788,12 @@ __attribute__((visibility("default"), hot)) int thread_mutex_lock(thread_mutex_t
         preempt_restore(&old);
         return -1;
     }
-                                                                                                                                      
-    thread_hot_t *me = current;
+#ifdef USE_PRIORITY
+    thread_hot_t *next = sched_pick_highest();
+#else 
     thread_hot_t *next = current->sched_prev;
+#endif                                                                                                                                     
+    thread_hot_t *me = current;
     sched_remove(current);
 
     me->sched_next = NULL; 
@@ -805,8 +874,13 @@ __attribute__((visibility("default"), hot)) int thread_sem_wait(thread_sem_t *se
         return -1;
     }
 
+#ifdef USE_PRIORITY
+        thread_hot_t *next = sched_pick_highest();
+#else 
+        thread_hot_t *next = current->sched_prev;
+#endif
+
     thread_hot_t *me   = current;
-    thread_hot_t *next = current->sched_prev;
     sched_remove(current);
 
     me->sched_next = NULL;
@@ -913,7 +987,12 @@ __attribute__((visibility("default"))) int thread_sigwait(thread_sigset_t mask, 
 
     /* Se retirer de la file et passer la main au suivant */
     thread_hot_t *me   = current;
+#ifdef USE_PRIORITY
+    thread_hot_t *next = sched_pick_highest();
+#else 
     thread_hot_t *next = current->sched_prev;
+#endif
+
     sched_remove(current);
 
     current = next;

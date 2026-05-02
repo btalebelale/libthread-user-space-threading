@@ -55,7 +55,8 @@ tests/23-create-many-once: tests/23-create-many-once.c $(LIB_SRC_C) $(LIB_SRC_S)
 tests/71-preemption: tests/71-preemption.c $(LIB_SRC_C) $(LIB_SRC_S)
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PREEMPTION $^ -o $@
 
-
+tests/131-priority: tests/131-priority.c $(LIB_SRC_C) $(LIB_SRC_S)
+	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PRIORITY $^ -o $@
 
 pthreads: $(TEST_PTHREAD_BINS)
 

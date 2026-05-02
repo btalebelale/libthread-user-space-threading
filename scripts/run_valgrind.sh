@@ -37,3 +37,9 @@ $VALGRIND ./tests/71-preemption 20
 
 echo "===== DEADLOCK ====="
 $VALGRIND ./tests/81-deadlock
+
+echo "===== SIGNALS ============="
+$VALGRIND ./tests/124-signals
+
+echo "===== PRIORITY ============"
+$VALGRIND ./tests/131-priority

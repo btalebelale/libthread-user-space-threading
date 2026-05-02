@@ -60,6 +60,18 @@ static inline __attribute__((always_inline)) void sched_replace(thread_hot_t *ol
     }
 }
 
+#ifdef USE_PRIORITY
+
+static inline __attribute__((always_inline)) thread_hot_t *sched_pick_highest(void){
+    thread_hot_t *best = current->sched_next;
+    for (thread_hot_t *t = best->sched_next; t != current; t = t->sched_next)                                                         
+        if (t->priority > best->priority)                                                                                             
+            best = t;
+    return best;
+}
+
+#endif
+
 void sched_init(void);
 
 #endif
