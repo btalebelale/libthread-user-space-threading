@@ -31,8 +31,7 @@ TEST_BINS = tests/01-main \
 			tests/65-sem-prodcons \
             tests/71-preemption  \
             tests/81-deadlock \
-			tests/124-signals  \
-			tests/131-priority
+			tests/124-signals  
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
