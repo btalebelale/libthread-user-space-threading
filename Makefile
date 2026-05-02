@@ -30,8 +30,10 @@ TEST_BINS = tests/01-main \
 			tests/64-sem \
 			tests/65-sem-prodcons \
             tests/71-preemption  \
-            tests/81-deadlock\
-			tests/124-signals
+            tests/81-deadlock \
+			tests/124-signals  \
+			tests/131-priority
+
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
 all: $(LIB_NAME) $(TEST_BINS)
@@ -54,8 +56,7 @@ tests/23-create-many-once: tests/23-create-many-once.c $(LIB_SRC_C) $(LIB_SRC_S)
 tests/71-preemption: tests/71-preemption.c $(LIB_SRC_C) $(LIB_SRC_S)
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PREEMPTION $^ -o $@
 
-tests/72-preemption-mutex-bug: tests/72-preemption-mutex-bug.c $(LIB_SRC_C) $(LIB_SRC_S)
-	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PREEMPTION $^ -o $@
+
 
 pthreads: $(TEST_PTHREAD_BINS)
 
