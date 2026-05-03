@@ -126,7 +126,7 @@ __attribute__((visibility("default"), hot)) int thread_mutex_lock(thread_mutex_t
      * surcharger me->sched_next. Sinon sched_remove suit un sched_next
      * NULL et crash. (En MN, schedule_park sauve me->rsp et n'utilise
      * pas sched_*, donc l'ordre est libre.) */
-    thread_hot_t *next = current->sched_prev;
+    thread_hot_t *next = sched_pick_next();
     sched_remove(current);
 #endif
 
@@ -228,7 +228,7 @@ __attribute__((visibility("default"), hot)) int thread_sem_wait(thread_sem_t *se
 
     thread_hot_t *me = SYNC_ME();
 #ifndef MULTICORE
-    thread_hot_t *next = current->sched_prev;
+    thread_hot_t *next = sched_pick_next();
     sched_remove(current);
 #endif
 
@@ -346,7 +346,7 @@ __attribute__((visibility("default"))) int thread_sigwait(thread_sigset_t mask, 
     schedule_park(unlock_spinlock_cb, (void *)&cc->cold_lock);
 #else
     thread_hot_t *me = current;
-    thread_hot_t *next = current->sched_prev;
+    thread_hot_t *next = sched_pick_next();
     sched_remove(current);
     current = next;
     if (__builtin_expect(next->rsp == NULL, 0))

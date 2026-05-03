@@ -70,6 +70,19 @@ static inline __attribute__((always_inline)) thread_hot_t *sched_pick_highest(vo
 
 #endif
 
+/* Sélectionne le prochain thread à élire :
+ *   - USE_PRIORITY → max priority (O(n))
+ *   - sinon         → sched_prev (FIFO O(1))
+ * Pré-condition : !is_sched_empty(). */
+static inline __attribute__((always_inline)) thread_hot_t *sched_pick_next(void)
+{
+#ifdef USE_PRIORITY
+    return sched_pick_highest();
+#else
+    return current->sched_prev;
+#endif
+}
+
 void sched_init(void);
 
 
