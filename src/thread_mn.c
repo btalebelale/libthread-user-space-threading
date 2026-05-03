@@ -462,24 +462,11 @@ __attribute__((constructor, cold)) static void init_system(void)
     thread_hot_t *main_t = thread_alloc();
     if (!main_t) { perror("thread_alloc main"); exit(1); }
     thread_cold_t *mc = THREAD_COLD(main_t);
-        main_t->rsp = NULL;
+    main_t->rsp = NULL;
     main_t->sched_next = NULL;
     main_t->sched_prev = NULL;
-    mc->state = READY;
-    mc->stack_base = NULL;
-    mc->retval = NULL;
-    mc->waiting = NULL;
-    mc->parent = mc;
-    mc->rank = 0;
-    mc->func = NULL;
-    mc->func_arg = NULL;
-    mc->inline_jmpbuf = NULL;
-    mc->refcount = 1;
-    mc->started = 1;
-    mc->pending_sigs = 0;
-    mc->wait_mask = 0;
-    mc->sig_waiting = 0;
-    mc->received_sig = 0;
+    thread_cold_reset(mc);
+    mc->started = 1;  /* main tourne déjà */
     workers[0].current = main_t;
 
     /* Allocate sched stack for worker 0 (main). */
@@ -559,21 +546,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     }
 
     thread_cold_t *tc = THREAD_COLD(t);
-    tc->stack_base = NULL;
-    tc->state = READY;
-    tc->retval = NULL;
-    tc->waiting = NULL;
-    tc->parent = tc;
-    tc->rank = 0;
-    tc->func = NULL;
-    tc->func_arg = NULL;
-    tc->inline_jmpbuf = NULL;
-    tc->refcount = 1;
-    tc->started = 0;
-    tc->pending_sigs = 0;
-    tc->wait_mask = 0;
-    tc->sig_waiting = 0;
-    tc->received_sig = 0;
+    thread_cold_reset(tc);
     t->rsp = NULL;
     t->sched_next = NULL;
     t->sched_prev = NULL;

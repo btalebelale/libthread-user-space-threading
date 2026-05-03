@@ -130,10 +130,7 @@ __attribute__((visibility("default"), hot)) int thread_mutex_lock(thread_mutex_t
     sched_remove(current);
 #endif
 
-    me->sched_next = NULL;
-    if (m->wait_tail == NULL) m->wait_head = me;
-    else m->wait_tail->sched_next = me;
-    m->wait_tail = me;
+    wq_append(&m->wait_head, &m->wait_tail, me);
 
 #ifdef MULTICORE
     flush_last_created_pub();
@@ -157,7 +154,7 @@ __attribute__((visibility("default"), hot)) int thread_mutex_unlock(thread_mutex
 #ifdef MULTICORE
     pthread_spin_lock(&m->lock);
 #endif
-    thread_hot_t *w = m->wait_head;
+    thread_hot_t *w = wq_pop(&m->wait_head, &m->wait_tail);
     if (w == NULL)
     {
         m->locked = 0;
@@ -167,8 +164,6 @@ __attribute__((visibility("default"), hot)) int thread_mutex_unlock(thread_mutex
         preempt_restore(&old);
         return 0;
     }
-    m->wait_head = w->sched_next;
-    if (m->wait_head == NULL) m->wait_tail = NULL;
 #ifdef MULTICORE
     pthread_spin_unlock(&m->lock);
 #endif
@@ -237,10 +232,7 @@ __attribute__((visibility("default"), hot)) int thread_sem_wait(thread_sem_t *se
     sched_remove(current);
 #endif
 
-    me->sched_next = NULL;
-    if (s->wait_tail == NULL) s->wait_head = me;
-    else s->wait_tail->sched_next = me;
-    s->wait_tail = me;
+    wq_append(&s->wait_head, &s->wait_tail, me);
 
 #ifdef MULTICORE
     flush_last_created_pub();
@@ -268,11 +260,7 @@ __attribute__((visibility("default"), hot)) int thread_sem_post(thread_sem_t *se
     s->count++;
     thread_hot_t *w = NULL;
     if (s->count <= 0)
-    {
-        w = s->wait_head;
-        s->wait_head = w->sched_next;
-        if (s->wait_head == NULL) s->wait_tail = NULL;
-    }
+        w = wq_pop(&s->wait_head, &s->wait_tail);
 #ifdef MULTICORE
     pthread_spin_unlock(&s->lock);
 #endif

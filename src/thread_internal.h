@@ -55,6 +55,31 @@ typedef struct thread_cold
 extern thread_hot_t *current;
 #endif
 
+/* Reset des champs d'un descripteur cold à leur valeur "fraîche". Utilisé
+ * par thread_create (recyclage via free-list) et init_system (main thread).
+ * Ne touche PAS cold_lock (MN) : la spinlock est initialisée une seule fois
+ * à l'allocation du slot dans le slab et reste valide entre les recyclages.
+ * Ne touche pas non plus thread_hot_t (rsp, sched_*, priority) — c'est au
+ * caller de les poser. */
+static inline void thread_cold_reset(thread_cold_t *tc)
+{
+    tc->retval        = NULL;
+    tc->stack_base    = NULL;
+    tc->waiting       = NULL;
+    tc->parent        = tc;
+    tc->rank          = 0;
+    tc->state         = READY;
+    tc->func          = NULL;
+    tc->func_arg      = NULL;
+    tc->inline_jmpbuf = NULL;
+    tc->refcount      = 1;
+    tc->started       = 0;
+    tc->pending_sigs  = 0;
+    tc->wait_mask     = 0;
+    tc->sig_waiting   = 0;
+    tc->received_sig  = 0;
+}
+
 __attribute__((visibility("hidden"))) extern void context_switch(void **old_rsp, void *new_rsp);
 __attribute__((visibility("hidden"), __noreturn__)) extern void context_restore(void *new_rsp);
 __attribute__((visibility("hidden"))) extern void thread_trampoline(void);

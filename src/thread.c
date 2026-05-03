@@ -319,22 +319,8 @@ __attribute__((constructor, cold)) static void init_system(void)
     current->priority = THREAD_PRIORITY_DEFAULT;
 
     thread_cold_t *cc = THREAD_COLD(current);
-    cc->state = READY;
-
-    cc->stack_base = NULL;
-    cc->retval = NULL;
-    cc->waiting = NULL;
-
-    cc->parent = cc;
-    cc->rank = 0;
-    cc->func = NULL;
-    cc->func_arg = NULL;
-    cc->inline_jmpbuf = NULL;
-    // Signaux
-    cc->pending_sigs = 0;
-    cc->wait_mask    = 0;
-    cc->sig_waiting  = 0;
-    cc->received_sig = 0;
+    thread_cold_reset(cc);
+    cc->started = 1;  /* main tourne déjà */
 
     uintptr_t sp = (uintptr_t)(exit_stack + sizeof(exit_stack));
     sp &= ~(uintptr_t)0xF;
@@ -389,26 +375,10 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
         return -1;
 
     thread_cold_t *tc = THREAD_COLD(t);
-    tc->stack_base = NULL;
-    tc->state = READY;
-    tc->retval = NULL;
-    tc->waiting = NULL;
-
-    tc->parent = tc;
-    tc->rank = 0;
-
-    tc->func = NULL;
-    tc->func_arg = NULL;
-    tc->inline_jmpbuf = NULL;
-    tc->refcount = 1;
-    tc->started = 0;
+    thread_cold_reset(tc);
     t->rsp = NULL;
     t->priority = THREAD_PRIORITY_DEFAULT;
-    //signaux
-    tc->pending_sigs = 0;
-    tc->wait_mask    = 0;
-    tc->sig_waiting  = 0;
-    tc->received_sig = 0;
+
     flush_last_created();
     last_created = t;
     last_created_func = func;
@@ -518,6 +488,36 @@ int uf_union(thread_cold_t *a, thread_cold_t *b){
     return 0;
 }
 
+/* Exécute inline le thread t dans la frame courante, via setjmp/longjmp :
+ * - on prend la place de prev=current dans la sched-list (sched_replace)
+ * - fn(ar) tourne ; un thread_exit() depuis fn() saute via _longjmp jusqu'au
+ *   _setjmp posé ici, ce qui évite de se retrouver coincé dans la stack du
+ *   thread inline (pas de pile dédiée allouée).
+ * noinline : exigé pour que les locals ne soient pas clobberés par longjmp. */
+__attribute__((noinline))
+static void inline_run(thread_hot_t *t, void *(*fn)(void *), void *ar)
+{
+    thread_cold_t *tc = THREAD_COLD(t);
+    thread_hot_t *prev = current;
+    current = t;
+    sched_replace(prev, t);
+
+    tc->started = 1;
+    inline_executing++;
+    jmp_buf jb;
+    if (__builtin_expect(_setjmp(jb) == 0, 1))
+    {
+        tc->inline_jmpbuf = &jb;
+        tc->retval = fn(ar);
+    }
+    tc->inline_jmpbuf = NULL;
+    tc->state = FINISHED;
+    inline_executing--;
+
+    sched_replace(t, prev);
+    current = prev;
+}
+
 __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, void **retval)
 {
     sigset_t old;
@@ -535,48 +535,28 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
         if (__builtin_expect(last_created == t, 1))
         {
-            // Fast path: thread not yet flushed, no stack allocated
+            /* Fast inline-join : t encore en TLS, jamais sched_enqueue, pas
+             * de stack allouée. On l'exécute dans notre frame. */
             last_created = NULL;
-
             if (__builtin_expect(t->rsp == NULL, 1))
-            {
-                thread_hot_t *prev = current;
-                current = t;
-                sched_replace(prev, t);
-
-                void *(*fn)(void *) = last_created_func;
-                void *ar = last_created_arg;
-
-                tc->started = 1;
-                inline_executing++;
-                jmp_buf jb;
-                if (__builtin_expect(_setjmp(jb) == 0, 1))
-                {
-                    tc->inline_jmpbuf = &jb;
-                    tc->retval = fn(ar);
-                }
-                tc->inline_jmpbuf = NULL;
-                tc->state = FINISHED;
-                inline_executing--;
-
-                sched_replace(t, prev);
-                current = prev;
-            }
+                inline_run(t, last_created_func, last_created_arg);
         }
         else if (__builtin_expect(!tc->started && tc->func != NULL, 0))
         {
-            /* Generalized inline: thread was flushed but never ran.
+            /* Generalized inline : t a été flushé (donc dans la sched-list)
+             * mais n'a pas encore été élu par le scheduler.
              * Invariant : `tc->func != NULL` n'est posé que par
              * flush_last_created_slow(), qui appelle aussi sched_enqueue(t).
-             * Et seul le thread lui-même peut se sched_remove (via
+             * Seul le thread lui-même peut se sched_remove (via
              * mutex/sem/sigwait/exit), ce qui requiert started==1. Donc
              * (!tc->started && tc->func != NULL) implique t encore dans
-             * la liste circulaire — sched_remove(t) est safe.
+             * la liste circulaire → sched_remove(t) est safe.
              * (Cas user-bug "double-join" exclu, non spécifié par l'API.) */
             flush_last_created();
             sched_remove(t);
 
-            // Release the unused stack
+            /* La stack a peut-être été pré-allouée par lazy_stack_alloc :
+             * on la rend au pool puisqu'on va exécuter inline. */
             if (tc->stack_base)
             {
 #ifndef NVALGRIND
@@ -587,27 +567,7 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
             }
             t->rsp = NULL;
 
-            thread_hot_t *prev = current;
-            current = t;
-            sched_replace(prev, t);
-
-            void *(*fn)(void *) = tc->func;
-            void *ar = tc->func_arg;
-
-            tc->started = 1;
-            inline_executing++;
-            jmp_buf jb;
-            if (__builtin_expect(_setjmp(jb) == 0, 1))
-            {
-                tc->inline_jmpbuf = &jb;
-                tc->retval = fn(ar);
-            }
-            tc->inline_jmpbuf = NULL;
-            tc->state = FINISHED;
-            inline_executing--;
-
-            sched_replace(t, prev);
-            current = prev;
+            inline_run(t, tc->func, tc->func_arg);
         }
         else
         {
@@ -618,11 +578,7 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
                 preempt_restore(&old);
                 return -1;
             }
-#ifdef USE_PRIORITY
-            thread_hot_t *next = sched_pick_highest();
-#else 
-            thread_hot_t *next = current->sched_prev;
-#endif
+            thread_hot_t *next = sched_pick_next();
 
             sched_remove(current);
 
@@ -705,11 +661,7 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
     if (__builtin_expect(is_sched_empty(), 0))
         context_restore(exit_rsp);
 
-#ifdef USE_PRIORITY
-    thread_hot_t *next = sched_pick_highest();
-#else 
-    thread_hot_t *next = current->sched_prev;
-#endif
+    thread_hot_t *next = sched_pick_next();
 
     sched_remove(current);
     current = next;
