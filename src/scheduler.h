@@ -3,8 +3,6 @@
 
 #include "thread_internal.h"
 
-extern thread_hot_t *current;
-
 // current est TOUJOURS dans la liste circulaire.
 // Les threads READY sont dans la liste avec current.
 // yield = avancer current au suivant (pas d'enqueue/dequeue).
@@ -59,7 +57,5 @@ static inline __attribute__((always_inline)) void sched_replace(thread_hot_t *ol
         new_t->sched_prev->sched_next = new_t;
     }
 }
-
-void sched_init(void);
 
 #endif

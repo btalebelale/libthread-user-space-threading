@@ -1,43 +1,24 @@
-#pragma GCC optimize("Ofast,unroll-loops")
-
 #include "thread.h"
 #include "scheduler.h"
+#include "thread_common.h"
+#include "preempt.h"
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <signal.h>
-#include <string.h>                                                                                                            
+#include <string.h>
 #include <sys/time.h>
 #include <errno.h>
-
-
-#ifndef NVALGRIND
-#include <valgrind/memcheck.h>
-#include <valgrind/valgrind.h>
-#else
-#define VALGRIND_STACK_REGISTER(start, end) (0)
-#define VALGRIND_STACK_DEREGISTER(id) ((void)(id))
-#define VALGRIND_MAKE_MEM_DEFINED(addr, len) ((void)0)
-#endif
-
-#ifndef STACK_SIZE
-#define STACK_SIZE (64 * 1024)
-#endif
-
-#define STACK_CAP (1073741824 / STACK_SIZE)
-
-#define THREAD_CAP 262144
-#define SEM(s) ((sem_internal_t *)(s))
 
 static void *stack_arena;
 static int stack_arena_next;
 
 static void *stack_free_head;
 
-static thread_hot_t *hot_slab;
-static thread_cold_t *cold_slab;
+__attribute__((visibility("hidden"))) thread_hot_t  *hot_slab;
+__attribute__((visibility("hidden"))) thread_cold_t *cold_slab;
 static int thread_slab_next;
 
 static thread_hot_t *thread_free_head;
@@ -45,52 +26,36 @@ static thread_hot_t *thread_free_head;
 
 
 
-// La préemption
+// La préemption (handler/init locaux ; block/restore dans preempt.h)
 #ifdef USE_PREEMPTION
-                                                                                                                               
-#define PREEMPT_INTERVAL_US 20                                                                                            
-static void preempt_handler(int sig)                                                                                                  
-{               
-    (void)sig;  
+#define PREEMPT_INTERVAL_US 20
+static void preempt_handler(int sig)
+{
+    (void)sig;
     thread_yield();
-}                                                                                                                                     
-                
-__attribute__((cold)) static void preempt_init(void)                                                                                  
-{                                                                                                                                     
-  struct sigaction sa;                                                                                                              
-  memset(&sa, 0, sizeof(sa));
-  sigemptyset(&sa.sa_mask);
-  sa.sa_handler = preempt_handler;
-  sa.sa_flags = SA_RESTART;                                                                                                         
-  sigaction(SIGALRM, &sa, NULL);
-                                                                                                                                    
-  struct itimerval timer;                                                                                                           
-  timer.it_value.tv_sec = 0;
-  timer.it_value.tv_usec = PREEMPT_INTERVAL_US;                                                                                     
-  timer.it_interval = timer.it_value;                                                                                               
-  setitimer(ITIMER_REAL, &timer, NULL);
-} 
-                                                                                                                                      
-static inline void preempt_block(sigset_t *old)                                                                                       
+}
+
+__attribute__((cold)) static void preempt_init(void)
 {
-    sigset_t mask;                                                                                                                    
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGALRM);                                                                                                        
-    sigprocmask(SIG_BLOCK, &mask, old);
-}                                                                                                                                     
-                
-static inline void preempt_restore(sigset_t *old)                                                                                     
-{
-    sigprocmask(SIG_SETMASK, old, NULL);                                                                                              
-}               
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_handler = preempt_handler;
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGALRM, &sa, NULL);
+
+    struct itimerval timer;
+    timer.it_value.tv_sec = 0;
+    timer.it_value.tv_usec = PREEMPT_INTERVAL_US;
+    timer.it_interval = timer.it_value;
+    setitimer(ITIMER_REAL, &timer, NULL);
+}
 #else
-#define preempt_init()            ((void)0)
-#define preempt_block(old)        ((void)(old))                                                                                       
-#define preempt_restore(old)      ((void)(old))
-
-#endif 
+#define preempt_init() ((void)0)
+#endif
 
 
+__attribute__((visibility("hidden"))) thread_hot_t *current __attribute__((aligned(64))) = NULL;
 __attribute__((visibility("hidden"))) thread_hot_t *last_created;
 static void *(*last_created_func)(void *);
 static void *last_created_arg;
@@ -100,8 +65,6 @@ __attribute__((visibility("hidden"))) int inline_executing;
 #ifdef FP
 #include "dedup.h"
 #endif
-
-#define THREAD_COLD(hot) (&cold_slab[(hot) - hot_slab])
 
 static void *stack_alloc(void);
 static void stack_release(void *s);
@@ -131,15 +94,20 @@ void lazy_stack_alloc(thread_hot_t *t)
     void *stack = stack_alloc();
     if (__builtin_expect(!stack, 0))
     {
-        // No stacks left — run the function inline as fallback
-        tc->retval = tc->func(tc->func_arg);
-        tc->state = FINISHED;
-        return;
+        /* L'arena de stacks est épuisée. Le fallback "exécuter inline" est
+         * cassé (le yield qui nous a appelé va ensuite context_switch dans
+         * t->rsp == NULL → crash). Erreur de capacité non récupérable. */
+        fprintf(stderr,
+                "libthread: stack arena exhausted (max %d threads concurrents)\n",
+                STACK_CAP);
+        abort();
     }
     tc->stack_base = stack;
     t->rsp = stack_init(stack, tc->func, tc->func_arg);
 #ifndef NVALGRIND
-    tc->valgrind_stackid = VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
+    /* Stack utilisable = [stack + GUARD, stack + STACK_SIZE). */
+    tc->valgrind_stackid = VALGRIND_STACK_REGISTER(
+        (char *)stack + STACK_GUARD, (char *)stack + STACK_SIZE);
 #endif
 }
 
@@ -202,8 +170,6 @@ __attribute__((cold)) static void mem_destroy(void)
     cold_slab = NULL;
 }
 
-#define STACK_FREELIST_PTR(base) ((void **)((char *)(base) + STACK_SIZE - sizeof(void *)))
-
 static void *stack_alloc(void)
 {
     if (__builtin_expect(stack_free_head != NULL, 1))
@@ -215,7 +181,12 @@ static void *stack_alloc(void)
     if (__builtin_expect(stack_arena_next >= STACK_CAP, 0))
         return NULL;
 
-    return (char *)stack_arena + ((size_t)stack_arena_next++ * STACK_SIZE);
+    void *s = (char *)stack_arena + ((size_t)stack_arena_next++ * STACK_SIZE);
+    /* Page de garde sur la première utilisation du slot ; persiste à travers
+     * les recyclages via free list. */
+    if (__builtin_expect(mprotect(s, STACK_GUARD, PROT_NONE) != 0, 0))
+        perror("mprotect stack guard");
+    return s;
 }
 
 static void stack_release(void *s)
@@ -251,12 +222,7 @@ static void *exit_rsp;
 __attribute__((visibility("hidden"))) void thread_entry(void *(*func)(void *), void *arg)
 {
     THREAD_COLD(current)->started = 1;
-#ifdef USE_PREEMPTION
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGALRM);
-    sigprocmask(SIG_UNBLOCK, &mask, NULL);
-#endif
+    preempt_unblock_self();
     void *ret = func(arg);
     thread_exit(ret);
     __builtin_unreachable();
@@ -338,7 +304,6 @@ __attribute__((constructor, cold)) static void init_system(void)
     if (__builtin_expect(current != NULL, 0))
         return;
     mem_init();
-    sched_init();
     last_created = NULL;
     atexit(thread_system_destroy);
 
@@ -393,7 +358,7 @@ __attribute__((visibility("default"))) thread_t thread_self(void)
 __attribute__((visibility("default"))) int thread_create(thread_t *newthread, void *(*func)(void *),
                                                          void *arg)
 {
-    sigset_t old;                                                                                                                     
+    sigset_t old;
     preempt_block(&old);
 
 #ifdef FP
@@ -447,7 +412,7 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     last_created_arg = arg;
     *newthread = (thread_t)t;
 
-    preempt_restore(&old); 
+    preempt_restore(&old);
 
     return 0;
 }
@@ -455,8 +420,8 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
 // thread_yield_asm est implémenté dans context_switch.S
 
 #ifdef USE_PREEMPTION
-                                                                                                                                        
-__attribute__((visibility("hidden"))) extern int thread_yield_asm(void);                                                              
+
+__attribute__((visibility("hidden"))) extern int thread_yield_asm(void);
 
 __attribute__((visibility("default"))) int thread_yield(void)
 {
@@ -467,7 +432,7 @@ __attribute__((visibility("default"))) int thread_yield(void)
     int r = thread_yield_asm();
     preempt_restore(&old);
     return r;
-}  
+}
 
 #endif
 
@@ -475,7 +440,7 @@ __attribute__((visibility("default"))) int thread_yield(void)
 thread_cold_t *uf_find(thread_cold_t *t){
     while(t->daddy != t){
         t = t->daddy = t->daddy->daddy;
-    }   
+    }
     return t;
 }
 
@@ -486,11 +451,11 @@ int uf_union(thread_cold_t *a, thread_cold_t *b){
     if(a == b) return -1; //deadlock
 
     while(a->rank < b->rank){
-        thread_cold_t *tmp = a; 
-        a = b; 
+        thread_cold_t *tmp = a;
+        a = b;
         b = tmp;
     }
-    
+
     b->daddy = a;
     if(a->rank == b->rank) a->rank++;
     return 0;
@@ -543,7 +508,14 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
         }
         else if (__builtin_expect(!tc->started && tc->func != NULL, 0))
         {
-            // Generalized inline: thread was flushed but never ran
+            /* Generalized inline: thread was flushed but never ran.
+             * Invariant : `tc->func != NULL` n'est posé que par
+             * flush_last_created_slow(), qui appelle aussi sched_enqueue(t).
+             * Et seul le thread lui-même peut se sched_remove (via
+             * mutex/sem/sigwait/exit), ce qui requiert started==1. Donc
+             * (!tc->started && tc->func != NULL) implique t encore dans
+             * la liste circulaire — sched_remove(t) est safe.
+             * (Cas user-bug "double-join" exclu, non spécifié par l'API.) */
             flush_last_created();
             sched_remove(t);
 
@@ -635,7 +607,7 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
 
 __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
 {
-    sigset_t old;                                                                                                                     
+    sigset_t old;
     preempt_block(&old);
 
     thread_cold_t *cc = THREAD_COLD(current);
@@ -682,253 +654,13 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
     context_restore(next->rsp);
 }
 
-// Mutex (stubs)
+/* Mutex, sémaphores, signaux thread : implémentations dans thread_sync.c
+ * (partagé avec la variante MN). */
 
-#define MUTEX(m) ((mutex_internal_t *)(m))
-
-
-__attribute__((visibility("default"))) int thread_mutex_init(thread_mutex_t *mutex)
+/* Wrapper hidden vers le flush_last_created statique inline ci-dessus.
+ * Permet à thread_sync.c (compilé séparément) d'invoquer le flush sans
+ * dupliquer la logique. */
+__attribute__((visibility("hidden"))) void flush_last_created_pub(void)
 {
-    mutex_internal_t *m = MUTEX(mutex);
-    m->locked = 0;                                                                                                                    
-    m->wait_head = NULL;
-    m->wait_tail = NULL;                                                                                                              
-    return 0;
+    flush_last_created();
 }
-
-
-__attribute__((visibility("default"))) int thread_mutex_destroy(thread_mutex_t *mutex)
-{
-    (void)mutex;
-    return 0;
-}
-
-
-__attribute__((visibility("default"), hot)) int thread_mutex_lock(thread_mutex_t *mutex)
-{
-    sigset_t old;                                                                                                                     
-    preempt_block(&old);
-
-    mutex_internal_t *m = MUTEX(mutex);                                                                                               
-                                                                                                                                        
-    if (__builtin_expect(!m->locked, 1))
-    {
-        m->locked = 1;
-        preempt_restore(&old); // test 72
-        return 0;
-    }
-
-    if (__builtin_expect(is_sched_empty(), 0)){
-        preempt_restore(&old);
-        return -1;
-    }
-                                                                                                                                      
-    thread_hot_t *me = current;
-    thread_hot_t *next = current->sched_prev;
-    sched_remove(current);
-
-    me->sched_next = NULL; 
-    if (m->wait_tail == NULL)                                                                                                         
-        m->wait_head = me;
-    else                                                                                                                              
-        m->wait_tail->sched_next = me;
-    m->wait_tail = me;                                                                                                                
-                                                                                                           
-    current = next;
-    __builtin_prefetch(next->rsp, 0, 3);
-    context_switch(&me->rsp, next->rsp);
-    
-    preempt_restore(&old);
-
-    return 0;
-}
-
-
-__attribute__((visibility("default"), hot)) int thread_mutex_unlock(thread_mutex_t *mutex)
-{
-    sigset_t old;                                                                                                                     
-    preempt_block(&old);
-
-    mutex_internal_t *m = MUTEX(mutex);                                                                                               
-                  
-    thread_hot_t *w = m->wait_head;                                                                                                   
-    if (w == NULL)
-    {                                                                                                                                 
-        m->locked = 0;
-        preempt_restore(&old);
-        return 0;
-    }                                                     
-    m->wait_head = w->sched_next;
-    if (m->wait_head == NULL)                                                                                                         
-        m->wait_tail = NULL;
-                                                                                                                                      
-    sched_enqueue(w);
-
-    preempt_restore(&old);
-
-    return 0;     
-}
-
-
-
-__attribute__((visibility("default"), hot))int thread_sem_init(thread_sem_t *sem, int value)
-{
-    sem_internal_t *s = SEM(sem);
-    s->count     = value;
-    s->wait_head = NULL;
-    s->wait_tail = NULL;
-    return 0;
-}
-
-__attribute__((visibility("default"), hot)) int thread_sem_destroy(thread_sem_t *sem)
-{
-    (void)sem;
-    return 0;
-}
-
-__attribute__((visibility("default"), hot)) int thread_sem_wait(thread_sem_t *sem)
-{
-    sigset_t old;
-    preempt_block(&old); //bloque la préemption
-
-    sem_internal_t *s = SEM(sem);
-    s->count--;
-
-    if (s->count >= 0) { // ressource disponible, on passe directement
-        preempt_restore(&old);
-        return 0;
-    }
-    //tout le reste si count < 0 :pas de ressources disponibles, on doit se bloquer
-    
-    if (is_sched_empty()) { //si la file de l'ordonnanceur est vide, on ne peut pas se bloquer et on retourne une erreur
-        preempt_restore(&old);
-        return -1;
-    }
-
-    thread_hot_t *me   = current;
-    thread_hot_t *next = current->sched_prev;
-    sched_remove(current);
-
-    me->sched_next = NULL;
-    if (s->wait_tail == NULL)
-        s->wait_head = me;
-    else
-        s->wait_tail->sched_next = me;
-    s->wait_tail = me;
-
-    current = next;
-    if (__builtin_expect(next->rsp == NULL, 0))
-        lazy_stack_alloc(next);
-    context_switch(&me->rsp, next->rsp);
-
-    preempt_restore(&old);
-    return 0;
-}
-
-__attribute__((visibility("default"), hot)) int thread_sem_post(thread_sem_t *sem)
-{
-    sigset_t old;
-    preempt_block(&old);//bloque la préemption
-
-    sem_internal_t *s = SEM(sem);
-    s->count++;
-
-    if (s->count <= 0) {
-        /* il y a un thread en attente : le réveiller */
-        thread_hot_t *w = s->wait_head;
-        s->wait_head = w->sched_next;
-        if (s->wait_head == NULL)
-            s->wait_tail = NULL;
-        sched_enqueue(w);
-    }
-
-    preempt_restore(&old);
-    return 0;
-}
-
-// Signaux 
-__attribute__((visibility("default"))) int thread_kill(thread_t target, int sig)
-{
-    if (sig < 1 || sig > 7)
-        return -1;  /* signal invalide pour notre uint8_t */
-
-    sigset_t old;
-    preempt_block(&old);
-
-    thread_hot_t  *t  = (thread_hot_t *)target;
-    thread_cold_t *tc = THREAD_COLD(t);
-
-    thread_sigset_t bit = (thread_sigset_t)(1u << sig);
-
-    /* Déposer le signal dans le pending du thread cible */
-    tc->pending_sigs |= bit;
-
-    /* Le thread cible est-il bloqué dans thread_sigwait
-     * et attend-il justement ce signal ? */
-    if (tc->sig_waiting && (tc->wait_mask & bit))
-    {
-        /* Consommer le signal et noter lequel a réveillé le thread */
-        tc->pending_sigs  &= ~bit;
-        tc->received_sig   = sig;
-        tc->sig_waiting    = 0;
-        tc->wait_mask      = 0;
-
-        /* Remettre le thread dans la file de l'ordonnanceur */
-        sched_enqueue(t);
-    }
-
-    preempt_restore(&old);
-    return 0;
-}
-
-__attribute__((visibility("default"))) int thread_sigwait(thread_sigset_t mask, int *sig)
-{
-    sigset_t old;
-    preempt_block(&old);
-
-    thread_cold_t *cc = THREAD_COLD(current);
-
-    /* Vérifie si un signal attendu est déjà pending (livraison immédiate) */
-    thread_sigset_t hit = cc->pending_sigs & mask;
-    if (hit)
-    {
-        /* Prendre le signal de plus faible numéro (bit le moins significatif) */
-        int s = __builtin_ctz(hit);  /* count trailing zeros → numéro du bit */
-        cc->pending_sigs &= ~(thread_sigset_t)(1u << s); /*vider ce bit */
-        if (sig)
-            *sig = s;
-        preempt_restore(&old);
-        return 0;
-    }
-
-    /* Aucun signal disponible : se bloquer */
-    if (is_sched_empty())
-    {   preempt_restore(&old);
-        return -1;
-    }
-
-    /* Enregistrer l'attente */
-    cc->wait_mask   = mask;
-    cc->sig_waiting = 1; // on est bloque dans sigwait
-
-    /* Se retirer de la file et passer la main au suivant */
-    thread_hot_t *me   = current;
-    thread_hot_t *next = current->sched_prev;
-    sched_remove(current);
-
-    current = next;
-
-    if (__builtin_expect(next->rsp == NULL, 0))
-        lazy_stack_alloc(next);
-
-    context_switch(&me->rsp, next->rsp);
-
-    /* On reprend ici quand thread_kill nous a réveillé */
-    if (sig)
-        *sig = cc->received_sig;
-
-    preempt_restore(&old);
-    return 0;
-}
-
-
