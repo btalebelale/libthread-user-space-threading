@@ -3,8 +3,6 @@
 
 #include "thread_internal.h"
 
-extern thread_hot_t *current;
-
 // current est TOUJOURS dans la liste circulaire.
 // Les threads READY sont dans la liste avec current.
 // yield = avancer current au suivant (pas d'enqueue/dequeue).
@@ -64,14 +62,28 @@ static inline __attribute__((always_inline)) void sched_replace(thread_hot_t *ol
 
 static inline __attribute__((always_inline)) thread_hot_t *sched_pick_highest(void){
     thread_hot_t *best = current->sched_next;
-    for (thread_hot_t *t = best->sched_next; t != current; t = t->sched_next)                                                         
-        if (t->priority > best->priority)                                                                                             
+    for (thread_hot_t *t = best->sched_next; t != current; t = t->sched_next)
+        if (t->priority > best->priority)
             best = t;
     return best;
 }
 
 #endif
 
+/* Sélectionne le prochain thread à élire :
+ *   - USE_PRIORITY → max priority (O(n))
+ *   - sinon         → sched_prev (FIFO O(1))
+ * Pré-condition : !is_sched_empty(). */
+static inline __attribute__((always_inline)) thread_hot_t *sched_pick_next(void)
+{
+#ifdef USE_PRIORITY
+    return sched_pick_highest();
+#else
+    return current->sched_prev;
+#endif
+}
+
 void sched_init(void);
+
 
 #endif
