@@ -39,46 +39,53 @@ ifneq ($(PREV_VARIANT),$(BUILD_VARIANT))
 $(shell rm -f src/*.o $(LIB_NAME); mkdir -p src; echo $(BUILD_VARIANT) > $(BUILD_STAMP))
 endif
 
-TEST_BINS = tests/01-main \
-            tests/02-switch \
-            tests/03-equity \
-            tests/11-join \
-            tests/12-join-main \
-            tests/13-join-switch \
-            tests/21-create-many \
-            tests/22-create-many-recursive \
-            tests/23-create-many-once \
-            tests/31-switch-many \
-            tests/32-switch-many-join \
-            tests/33-switch-many-cascade \
-            tests/51-fibonacci \
-            tests/61-mutex \
-            tests/62-mutex \
-            tests/63-mutex-equity \
-            tests/64-mutex-join \
-			tests/64-sem \
-			tests/65-sem-prodcons \
-            tests/71-preemption  \
-            tests/81-deadlock \
-            tests/124-signals
+BASE_TEST_BINS = tests/01-main \
+                 tests/02-switch \
+                 tests/03-equity \
+                 tests/11-join \
+                 tests/12-join-main \
+                 tests/13-join-switch \
+                 tests/21-create-many \
+                 tests/22-create-many-recursive \
+                 tests/23-create-many-once \
+                 tests/31-switch-many \
+                 tests/32-switch-many-join \
+                 tests/33-switch-many-cascade \
+                 tests/51-fibonacci \
+                 tests/61-mutex \
+                 tests/62-mutex \
+                 tests/63-mutex-equity \
+                 tests/64-mutex-join \
+                 tests/64-sem \
+                 tests/65-sem-prodcons \
+                 tests/71-preemption \
+                 tests/81-deadlock \
+                 tests/124-signals
+
+MONO_TEST_BINS = tests/131-priority
+
+MN_TEST_BINS = tests/101-multicore-counter \
+               tests/102-multicore-concurrent-work \
+               tests/103-multicore-sem-prodcons \
+               tests/104-multicore-mutex-ordering \
+               tests/105-multicore-join-values \
+               tests/106-multicore-cascade-mutex \
+               tests/107-multicore-yield-fairness \
+               tests/111-multicore-stress-create-join \
+               tests/112-multicore-stress-mutex \
+               tests/113-multicore-memory-stress \
+               tests/121-multicore-speedup \
+               tests/122-multicore-lock-overhead \
+               tests/123-multicore-scalability
 
 ifeq ($(MULTICORE),1)
-TEST_BINS += tests/101-multicore-counter \
-             tests/102-multicore-concurrent-work \
-             tests/103-multicore-sem-prodcons \
-             tests/104-multicore-mutex-ordering \
-             tests/105-multicore-join-values \
-             tests/106-multicore-cascade-mutex \
-             tests/107-multicore-yield-fairness \
-             tests/111-multicore-stress-create-join \
-             tests/112-multicore-stress-mutex \
-             tests/113-multicore-memory-stress \
-             tests/121-multicore-speedup \
-             tests/122-multicore-lock-overhead \
-             tests/123-multicore-scalability
+TEST_BINS = $(BASE_TEST_BINS) $(MN_TEST_BINS)
 else
-TEST_BINS += tests/131-priority
+TEST_BINS = $(BASE_TEST_BINS) $(MONO_TEST_BINS)
 endif
+
+# Liste exhaustive pour le clean (indépendante du mode)
+ALL_TEST_BINS = $(BASE_TEST_BINS) $(MONO_TEST_BINS) $(MN_TEST_BINS)
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
@@ -142,12 +149,14 @@ pgo: clean
 
 clean:
 	rm -f src/*.o $(LIB_NAME) $(BUILD_STAMP)
-	rm -f $(TEST_BINS) $(TEST_PTHREAD_BINS)
+	rm -f $(ALL_TEST_BINS) $(addsuffix -pthread,$(ALL_TEST_BINS))
 	rm -rf install/lib/* install/bin/*
 	rm -rf tests/*.dSYM
-	rm -f src/*.gcda src/*.gcno tests/*.gcda tests/*.gcno
+	rm -f src/*.gcda src/*.gcno src/*.gcov
+	rm -f tests/*.gcda tests/*.gcno tests/*.gcov
 	rm -f graphs/*.png
 	rm -f perf.data perf.data.old
+	rm -f core core.*
 
 multicore:
 	$(MAKE) MULTICORE=1 all
