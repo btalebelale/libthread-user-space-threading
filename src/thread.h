@@ -4,6 +4,10 @@
 
 typedef uint8_t thread_sigset_t;   /* bits 1..7 = signaux 1..7 */
 
+#define THREAD_PRIORITY_MIN     0
+#define THREAD_PRIORITY_MAX     7
+#define THREAD_PRIORITY_DEFAULT 3
+
 #ifndef USE_PTHREAD
 
 /* identifiant de thread
@@ -65,6 +69,13 @@ int thread_sem_post(thread_sem_t *sem);   /* V() — incrémente, réveille si w
 /* Interface pour la gestion des signaux */
 int thread_kill(thread_t target, int sig);
 int thread_sigwait(thread_sigset_t mask, int *sig);
+
+#ifdef USE_PRIORITY
+/* Interface pour les priorités */
+int thread_setpriority(thread_t thread, int priority);
+int thread_getpriority(thread_t thread, int *priority);
+#endif
+
 #else /* USE_PTHREAD */
 
 /* Si on compile avec -DUSE_PTHREAD, ce sont les pthreads qui sont utilisés */
@@ -95,6 +106,9 @@ int thread_sigwait(thread_sigset_t mask, int *sig);
 
 #define thread_kill(target, sig)      pthread_kill(target, sig)
 #define thread_sigwait(mask, sig)     (-1)
+
+#define thread_setpriority(th, prio) ((void)0)                                                                                              
+#define thread_getpriority(th, pprio) (*(pprio) = 0, 0)
 
 #endif /* USE_PTHREAD */
 

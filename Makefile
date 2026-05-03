@@ -59,8 +59,8 @@ TEST_BINS = tests/01-main \
 			tests/64-sem \
 			tests/65-sem-prodcons \
             tests/71-preemption  \
-            tests/81-deadlock\
-			tests/124-signals
+            tests/81-deadlock \
+            tests/124-signals
 
 ifeq ($(MULTICORE),1)
 TEST_BINS += tests/101-multicore-counter \
@@ -76,6 +76,8 @@ TEST_BINS += tests/101-multicore-counter \
              tests/121-multicore-speedup \
              tests/122-multicore-lock-overhead \
              tests/123-multicore-scalability
+else
+TEST_BINS += tests/131-priority
 endif
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
@@ -108,8 +110,8 @@ tests/23-create-many-once: tests/23-create-many-once.c $(LIB_SRC_C) $(LIB_SRC_S)
 tests/71-preemption: tests/71-preemption.c $(LIB_SRC_C) $(LIB_SRC_S)
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PREEMPTION $^ -o $@ $(EXTRA_LDFLAGS)
 
-tests/72-preemption-mutex-bug: tests/72-preemption-mutex-bug.c $(LIB_SRC_C) $(LIB_SRC_S)
-	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PREEMPTION $^ -o $@ $(EXTRA_LDFLAGS)
+tests/131-priority: tests/131-priority.c $(LIB_SRC_C) $(LIB_SRC_S)
+	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PRIORITY $^ -o $@
 
 pthreads: $(TEST_PTHREAD_BINS)
 

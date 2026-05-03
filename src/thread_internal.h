@@ -22,6 +22,7 @@ typedef struct thread_hot
     void *rsp;
     struct thread_hot *sched_next;
     struct thread_hot *sched_prev;
+    int priority;
 } thread_hot_t;
 
 // COLD : touché uniquement à create/join/exit
@@ -31,7 +32,7 @@ typedef struct thread_cold
     void *stack_base;
     struct thread_hot *waiting;
 
-    struct thread_cold *daddy;
+    struct thread_cold *parent;
     uint8_t rank;
 
     uint32_t state;

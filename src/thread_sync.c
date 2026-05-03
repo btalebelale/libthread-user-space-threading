@@ -46,6 +46,28 @@ static void unlock_spinlock_cb(void *arg)
 #define SYNC_WAKE(t) sched_enqueue(t)
 #endif
 
+/* Wait-queue FIFO simple : head/tail chaînés via thread_hot_t::sched_next.
+ * Réutilise sched_next car un thread parqué est déjà retiré de la sched-list
+ * (mono) ou n'y est pas (MN). Caller responsable du lock englobant. */
+static inline void wq_append(thread_hot_t **head, thread_hot_t **tail,
+                             thread_hot_t *t)
+{
+    t->sched_next = NULL;
+    if (*tail == NULL) *head = t;
+    else (*tail)->sched_next = t;
+    *tail = t;
+}
+
+static inline thread_hot_t *wq_pop(thread_hot_t **head, thread_hot_t **tail)
+{
+    thread_hot_t *t = *head;
+    if (t) {
+        *head = t->sched_next;
+        if (*head == NULL) *tail = NULL;
+    }
+    return t;
+}
+
 
 /* ---------- Mutex ---------- */
 __attribute__((visibility("default"))) int thread_mutex_init(thread_mutex_t *mutex)

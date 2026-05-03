@@ -52,6 +52,12 @@ run_test ./tests/71-preemption 100
 echo "===== DEADLOCK ============"
 run_test ./tests/81-deadlock
 
+echo "===== SIGNALS ============="
+run_test ./tests/124-signals
+
+echo "===== PRIORITY ============"
+run_test ./tests/131-priority
+
 echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}TOUS LES TESTS SONT PASSÉS AVEC SUCCÈS !${NC}"
 echo -e "${GREEN}==========================================${NC}"

@@ -469,7 +469,7 @@ __attribute__((constructor, cold)) static void init_system(void)
     mc->stack_base = NULL;
     mc->retval = NULL;
     mc->waiting = NULL;
-    mc->daddy = mc;
+    mc->parent = mc;
     mc->rank = 0;
     mc->func = NULL;
     mc->func_arg = NULL;
@@ -563,7 +563,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
     tc->state = READY;
     tc->retval = NULL;
     tc->waiting = NULL;
-    tc->daddy = tc;
+    tc->parent = tc;
     tc->rank = 0;
     tc->func = NULL;
     tc->func_arg = NULL;
@@ -600,7 +600,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *arg)
 #ifndef LIBTHREAD_NO_DEADLOCK_DETECT
 static thread_cold_t *uf_find_locked(thread_cold_t *t)
 {
-    while (t->daddy != t) t = t->daddy = t->daddy->daddy;
+    while (t->parent != t) t = t->parent = t->parent->parent;
     return t;
 }
 
@@ -613,7 +613,7 @@ static int uf_union(thread_cold_t *a, thread_cold_t *b)
     if (a->rank < b->rank) {
         thread_cold_t *tmp = a; a = b; b = tmp;
     }
-    b->daddy = a;
+    b->parent = a;
     if (a->rank == b->rank) a->rank++;
     pthread_spin_unlock(&uf_lock);
     return 0;
