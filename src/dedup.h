@@ -236,7 +236,7 @@ static void dedup_mem_init(void)
 
     char *mem = mmap(NULL, total,
                      PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+                     MAP_PRIVATE | MAP_ANONYMOUS | PORT_MMAP_POPULATE_FLAG, -1, 0);
     if (__builtin_expect(mem == MAP_FAILED, 0))
     {
         perror("mmap dedup swiss");

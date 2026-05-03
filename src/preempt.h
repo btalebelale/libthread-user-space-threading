@@ -1,9 +1,11 @@
 /* Helpers de blocage/restauration de SIGALRM, partagés par thread.c, thread_mn.c
  * et thread_sync.c. Variantes :
  *   - mono USE_PREEMPTION       : sigprocmask (single-threaded)
- *   - MN sans LIBTHREAD_MN_PREEMPT : no-op (la sched_stack n'aime pas être
- *                                   préemptée — voir commentaire thread_mn.c)
- *   - MN avec LIBTHREAD_MN_PREEMPT : pthread_sigmask (multi-thread)
+ *   - MN avec LIBTHREAD_MN_PREEMPT (défaut quand MULTICORE=1) : pthread_sigmask.
+ *     Invariant : SIGALRM masqué sur la sched_stack, démasqué sur la
+ *     user_stack. Voir commentaire détaillé en tête du bloc Preemption
+ *     dans thread_mn.c.
+ *   - MN avec LIBTHREAD_MN_NO_PREEMPT : no-op (opt-out explicite)
  *   - sans USE_PREEMPTION       : no-op
  */
 #ifndef __PREEMPT_H__

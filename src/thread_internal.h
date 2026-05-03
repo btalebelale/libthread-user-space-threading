@@ -2,6 +2,7 @@
 #define __THREAD_INTERNAL_H__
 
 #include "thread.h"
+#include "portable.h"
 #include <stddef.h>
 #include <setjmp.h>
 #include <stdint.h>
@@ -47,7 +48,7 @@ typedef struct thread_cold
     uint8_t sig_waiting;           // 1 si le thread est bloqué dans thread_sigwait
     int     received_sig;          // numéro du signal qui l'a réveillé
 #ifdef MULTICORE
-    pthread_spinlock_t cold_lock;
+    port_spin_t cold_lock;
 #endif
 } thread_cold_t;
 
@@ -80,9 +81,8 @@ static inline void thread_cold_reset(thread_cold_t *tc)
     tc->received_sig  = 0;
 }
 
-__attribute__((visibility("hidden"))) extern void context_switch(void **old_rsp, void *new_rsp);
-__attribute__((visibility("hidden"), __noreturn__)) extern void context_restore(void *new_rsp);
-__attribute__((visibility("hidden"))) extern void thread_trampoline(void);
+/* context_switch / context_restore / thread_trampoline déclarés dans portable.h
+ * (asm sur fast path, wrappers ucontext sur fallback). */
 
 /* Slabs hot/cold + alloc paresseuse de pile : définis dans thread.c (mono)
  * ou thread_mn.c (MN), exposés hidden pour que thread_sync.c et
@@ -99,7 +99,7 @@ typedef struct mutex_internal
     thread_hot_t *wait_head;  // premier thread en attente
     thread_hot_t *wait_tail;  // dernier thread en attente
 #ifdef MULTICORE
-    pthread_spinlock_t lock;
+    port_spin_t lock;
 #endif
 } mutex_internal_t;
 
@@ -109,7 +109,7 @@ typedef struct sem_internal {
     thread_hot_t    *wait_head;  // FIFO des threads bloqués
     thread_hot_t    *wait_tail;
 #ifdef MULTICORE
-    pthread_spinlock_t lock;
+    port_spin_t lock;
 #endif
 } sem_internal_t;
 

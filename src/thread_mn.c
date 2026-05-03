@@ -32,9 +32,9 @@ static void *stack_arena;
 static int   stack_arena_next;
 static void *stack_free_head;
 
-static pthread_spinlock_t alloc_lock;
+static port_spin_t alloc_lock;
 #ifndef LIBTHREAD_NO_DEADLOCK_DETECT
-static pthread_spinlock_t uf_lock;
+static port_spin_t uf_lock;
 #endif
 
 static int      nworkers;
@@ -49,21 +49,46 @@ __attribute__((visibility("hidden"))) thread_hot_t *last_created;
 __attribute__((visibility("hidden"))) int inline_executing;
 
 /* ---------- Preemption ----------
- * En mode M:N, la préemption SIGALRM est DÉSACTIVÉE par défaut : un signal
- * tombant sur la sched_stack peut corrompre la séquence schedule/context_switch.
- * USE_PREEMPTION peut rester défini (il l'est dans CFLAGS pour bloquer l'alias
- * du .S), mais le code SIGALRM n'est pas compilé. Pour forcer la préemption en
- * MN (e.g. test 71), définir LIBTHREAD_MN_PREEMPT à la compilation.
+ * En MN, la préemption SIGALRM est ACTIVÉE par défaut (LIBTHREAD_MN_PREEMPT
+ * posé par le Makefile). Robustesse garantie par l'invariant suivant :
+ *
+ *   SIGALRM est MASQUÉ tant que le pthread courant exécute du code sur la
+ *   sched_stack ; il n'est DÉMASQUÉ que sur la pile utilisateur d'un thread.
+ *
+ * Sites qui maintiennent l'invariant :
+ *   - init_system : pose le mask bloqué AVANT pthread_create (les workers
+ *     l'héritent), arme l'ITIMER, puis démasque sur le main (sur user stack).
+ *   - worker_entry : NE démasque PAS (entre directement dans worker_loop sur
+ *     la sched_stack avec SIGALRM bloqué).
+ *   - thread_entry : démasque au démarrage d'un user thread (premier saut).
+ *   - thread_yield/join/exit, mutex_lock, sem_wait, sigwait : preempt_block
+ *     avant le saut sur sched_stack, preempt_restore après reprise user.
+ *
+ * Conséquence : le handler ne peut s'exécuter que sur une user stack, où
+ * self_worker->current est valide et où un thread_yield depuis le handler
+ * passera proprement par preempt_block en cascade. Pour désactiver la
+ * préemption MN : -DLIBTHREAD_MN_NO_PREEMPT.
  * Helpers block/restore/unblock_self : voir preempt.h. */
 #ifdef PREEMPT_ENABLED
 #define PREEMPT_INTERVAL_US 200
 
+/* Drapeau positionné par schedule()/schedule_park() pendant la fenêtre où
+ * w->current vient d'être lu mais où context_switch n'a pas encore basculé
+ * sur la sched_stack. Sur user stack, SIGALRM est démasqué : un signal
+ * peut frapper ici, et appeler thread_yield serait fatal car w->current
+ * a déjà été NULLifié. Le drapeau ferme la fenêtre. */
+
 static void preempt_handler(int sig)
 {
     (void)sig;
-    preempt_unblock_self();
-    if (self_worker && self_worker->current && self_worker->inline_executing == 0)
-        thread_yield();
+    /* Le kernel ajoute SIGALRM au mask pendant l'exécution du handler
+     * (sa_mask vide + bloquage du signal courant), évitant la réentrance.
+     * sigreturn restaure le mask au retour vers l'instruction interrompue. */
+    worker_t *w = self_worker;
+    if (!w) return;                       /* signal délivré avant init_system */
+    if (w->current == NULL) return;       /* pthread sur sched_stack en transition */
+    if (w->inline_executing != 0) return; /* fast-inline-join, swap interdit */
+    thread_yield();
 }
 
 __attribute__((cold)) static void preempt_init(void)
@@ -92,7 +117,7 @@ __attribute__((cold)) static void mem_init(void)
     stack_arena = mmap(NULL, (size_t)STACK_CAP * STACK_SIZE, PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (stack_arena == MAP_FAILED) { perror("mmap stack arena"); exit(1); }
-    madvise(stack_arena, (size_t)STACK_CAP * STACK_SIZE, MADV_HUGEPAGE);
+    PORT_MADV_HUGEPAGE(stack_arena, (size_t)STACK_CAP * STACK_SIZE);
 
     hot_slab = mmap(NULL, (size_t)THREAD_CAP * sizeof(thread_hot_t), PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -107,9 +132,9 @@ __attribute__((cold)) static void mem_init(void)
     thread_slab_next = 0;
     thread_free_head = NULL;
 
-    pthread_spin_init(&alloc_lock, PTHREAD_PROCESS_PRIVATE);
+    PORT_SPIN_INIT(&alloc_lock);
 #ifndef LIBTHREAD_NO_DEADLOCK_DETECT
-    pthread_spin_init(&uf_lock, PTHREAD_PROCESS_PRIVATE);
+    PORT_SPIN_INIT(&uf_lock);
 #endif
 }
 
@@ -165,7 +190,7 @@ static void *stack_alloc(void)
         return s;
     }
     /* Refill : prend jusqu'à S_CACHE_REFILL stacks dans le pool global. */
-    pthread_spin_lock(&alloc_lock);
+    PORT_SPIN_LOCK(&alloc_lock);
     void *first = NULL;
     int got = 0;
     while (got < S_CACHE_REFILL) {
@@ -175,7 +200,7 @@ static void *stack_alloc(void)
         first = s;
         got++;
     }
-    pthread_spin_unlock(&alloc_lock);
+    PORT_SPIN_UNLOCK(&alloc_lock);
     if (!first) return NULL;
     /* first reste pour le caller, le reste va dans le cache. */
     void *ret = first;
@@ -199,7 +224,7 @@ static void stack_release(void *s)
         return;
     }
     /* Cache plein : flush une moitié vers global, puis on ajoute s. */
-    pthread_spin_lock(&alloc_lock);
+    PORT_SPIN_LOCK(&alloc_lock);
     for (int i = 0; i < S_CACHE_REFILL && s_cache_head; i++) {
         void *x = s_cache_head;
         s_cache_head = *STACK_FREELIST_PTR(x);
@@ -209,7 +234,7 @@ static void stack_release(void *s)
     }
     *STACK_FREELIST_PTR(s) = stack_free_head;
     stack_free_head = s;
-    pthread_spin_unlock(&alloc_lock);
+    PORT_SPIN_UNLOCK(&alloc_lock);
 }
 
 static thread_hot_t *thread_alloc(void)
@@ -222,7 +247,7 @@ static thread_hot_t *thread_alloc(void)
     }
     /* Refill : free-list global d'abord, puis slab vierge.
      * On chaîne via t->rsp comme le pool global le fait déjà. */
-    pthread_spin_lock(&alloc_lock);
+    PORT_SPIN_LOCK(&alloc_lock);
     thread_hot_t *list = NULL;
     int got = 0;
     while (got < T_CACHE_REFILL && thread_free_head) {
@@ -235,12 +260,12 @@ static thread_hot_t *thread_alloc(void)
     while (got < T_CACHE_REFILL && thread_slab_next < THREAD_CAP) {
         thread_hot_t *t = &hot_slab[thread_slab_next++];
         thread_cold_t *tc = THREAD_COLD(t);
-        pthread_spin_init(&tc->cold_lock, PTHREAD_PROCESS_PRIVATE);
+        PORT_SPIN_INIT(&tc->cold_lock);
         t->rsp = (void *)list;
         list = t;
         got++;
     }
-    pthread_spin_unlock(&alloc_lock);
+    PORT_SPIN_UNLOCK(&alloc_lock);
     if (!list) return NULL;
     thread_hot_t *ret = list;
     list = (thread_hot_t *)list->rsp;
@@ -264,7 +289,7 @@ static void thread_release(thread_hot_t *t)
         return;
     }
     /* Cache plein : flush moitié vers global, puis on ajoute t. */
-    pthread_spin_lock(&alloc_lock);
+    PORT_SPIN_LOCK(&alloc_lock);
     for (int i = 0; i < T_CACHE_REFILL && t_cache_head; i++) {
         thread_hot_t *x = t_cache_head;
         t_cache_head = (thread_hot_t *)x->rsp;
@@ -274,7 +299,7 @@ static void thread_release(thread_hot_t *t)
     }
     t->rsp = (void *)thread_free_head;
     thread_free_head = t;
-    pthread_spin_unlock(&alloc_lock);
+    PORT_SPIN_UNLOCK(&alloc_lock);
 }
 
 /* ---------- Stack init / trampoline ---------- */
@@ -282,6 +307,7 @@ static int stack_color_counter;
 
 static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
 {
+#if PORT_FAST_PATH
     uintptr_t sp = (uintptr_t)stack_base + STACK_SIZE;
     sp -= ((unsigned)__atomic_fetch_add(&stack_color_counter, 1, __ATOMIC_RELAXED) & 0xFF) * 64;
     sp &= ~(uintptr_t)0xF;
@@ -296,6 +322,10 @@ static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
     *(--s) = 0;            /* r15 */
     VALGRIND_MAKE_MEM_DEFINED(s, 7 * sizeof(void *));
     return s;
+#else
+    (void)stack_color_counter;
+    return port_make_ctx(stack_base, func, arg);
+#endif
 }
 
 __attribute__((noinline, cold, visibility("hidden")))
@@ -347,10 +377,7 @@ static inline void flush_last_created(void)
  * call échoue, on continue sans pinning (utile sur hôtes contraints). */
 __attribute__((cold)) static void pin_worker_to_cpu(int cpu)
 {
-    cpu_set_t set;
-    CPU_ZERO(&set);
-    CPU_SET(cpu, &set);
-    pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+    PORT_PIN_THIS(cpu);
 }
 
 /* ---------- Worker entry (pour les pthreads non-main) ---------- */
@@ -360,9 +387,12 @@ __attribute__((__noreturn__)) static void *worker_entry(void *arg)
     self_worker = w;
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
     if (ncpu > 0) pin_worker_to_cpu(w->id % (int)ncpu);
-#ifdef MN_HAS_PREEMPT
-    preempt_unblock_self();
-#endif
+    /* SIGALRM reste masqué (hérité du main pthread via init_system) :
+     * worker_loop tourne sur la sched_stack, où la préemption corromprait
+     * la séquence schedule/context_switch. Le démasquage est fait par
+     * thread_entry (premier run d'un user thread) ou par preempt_restore
+     * (reprise post-park dans yield/join/mutex/sem). Cf. invariant
+     * documenté dans preempt.h. */
     /* La sched_stack est la pile pthread elle-même : sched_rsp sera sauvé
      * automatiquement au premier context_switch dans worker_loop. */
     worker_loop();
@@ -382,9 +412,10 @@ __attribute__((visibility("hidden"))) void thread_entry(void *(*func)(void *), v
 static void *make_main_sched_stack(void)
 {
     void *base = mmap(NULL, SCHED_STACK_SIZE, PROT_READ | PROT_WRITE,
-                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
+                      PORT_MMAP_STACK_FLAGS, -1, 0);
     if (base == MAP_FAILED) { perror("mmap sched_stack"); exit(1); }
 
+#if PORT_FAST_PATH
     uintptr_t sp = (uintptr_t)base + SCHED_STACK_SIZE;
     sp &= ~(uintptr_t)0xF;
     void **s = (void **)sp;
@@ -399,6 +430,12 @@ static void *make_main_sched_stack(void)
 
     workers[0].sched_stack_base = base;
     workers[0].sched_rsp = (void *)s;
+#else
+    /* Fallback : on arme un ucontext_t démarrant worker_loop avec la pile
+     * fournie. Le `void *` retourné est en fait un `ucontext_t *` opaque. */
+    workers[0].sched_stack_base = base;
+    workers[0].sched_rsp = port_make_sched_ctx(base, worker_loop);
+#endif
     return base;
 }
 
@@ -515,12 +552,28 @@ __attribute__((visibility("default"))) thread_t thread_self(void)
 
 __attribute__((visibility("default"))) int thread_yield(void)
 {
-    if (__builtin_expect(self_worker == NULL, 0)) return 0;
-    if (__builtin_expect(self_worker->inline_executing > 0, 0)) return 0;
+    /* IMPORTANT : preempt_block AVANT toute lecture de self_worker. Si SIGALRM
+     * tombait entre la lecture TLS et le block, le handler pourrait déclencher
+     * une migration vers un autre pthread ; au retour, le compilateur réutilise
+     * un registre callee-saved (rbx) qui cachait l'adresse __tls_get_addr de
+     * l'ANCIEN pthread → on lirait workers[ancien_P].current (potentiellement
+     * NULL si l'ancien worker est en transition sched_stack), → SEGV. */
 #ifdef MN_HAS_PREEMPT
     sigset_t old;
     preempt_block(&old);
 #endif
+    if (__builtin_expect(self_worker == NULL, 0)) {
+#ifdef MN_HAS_PREEMPT
+        preempt_restore(&old);
+#endif
+        return 0;
+    }
+    if (__builtin_expect(self_worker->inline_executing > 0, 0)) {
+#ifdef MN_HAS_PREEMPT
+        preempt_restore(&old);
+#endif
+        return 0;
+    }
     flush_last_created();
     schedule();
 #ifdef MN_HAS_PREEMPT
@@ -579,16 +632,16 @@ static thread_cold_t *uf_find_locked(thread_cold_t *t)
 
 static int uf_union(thread_cold_t *a, thread_cold_t *b)
 {
-    pthread_spin_lock(&uf_lock);
+    PORT_SPIN_LOCK(&uf_lock);
     a = uf_find_locked(a);
     b = uf_find_locked(b);
-    if (a == b) { pthread_spin_unlock(&uf_lock); return -1; }
+    if (a == b) { PORT_SPIN_UNLOCK(&uf_lock); return -1; }
     if (a->rank < b->rank) {
         thread_cold_t *tmp = a; a = b; b = tmp;
     }
     b->parent = a;
     if (a->rank == b->rank) a->rank++;
-    pthread_spin_unlock(&uf_lock);
+    PORT_SPIN_UNLOCK(&uf_lock);
     return 0;
 }
 #else
@@ -604,7 +657,7 @@ static inline int uf_union(thread_cold_t *a, thread_cold_t *b)
 static void unlock_cold_cb(void *arg)
 {
     thread_cold_t *tc = (thread_cold_t *)arg;
-    pthread_spin_unlock(&tc->cold_lock);
+    PORT_SPIN_UNLOCK(&tc->cold_lock);
 }
 
 __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, void **retval)
@@ -669,15 +722,15 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
      * autre worker de promouvoir t depuis B->last_created. */
     flush_last_created();
 
-    pthread_spin_lock(&tc->cold_lock);
+    PORT_SPIN_LOCK(&tc->cold_lock);
     if (tc->state == FINISHED) {
-        pthread_spin_unlock(&tc->cold_lock);
+        PORT_SPIN_UNLOCK(&tc->cold_lock);
         goto cleanup;
     }
 
     /* Détection de deadlock graphe d'attente. */
     if (uf_union(THREAD_COLD(w->current), tc) == -1) {
-        pthread_spin_unlock(&tc->cold_lock);
+        PORT_SPIN_UNLOCK(&tc->cold_lock);
 #ifdef MN_HAS_PREEMPT
         preempt_restore(&old);
 #endif
@@ -697,10 +750,10 @@ cleanup:
      * fait dans thread_exit (qui n'écrit retval qu'avant de prendre le
      * cold_lock). En pratique x86 fournit déjà cet ordering, mais le rendre
      * explicite évite qu'un futur refactor ne casse l'invariant. */
-    pthread_spin_lock(&tc->cold_lock);
+    PORT_SPIN_LOCK(&tc->cold_lock);
     if (retval) *retval = tc->retval;
     uint16_t rc = --tc->refcount;
-    pthread_spin_unlock(&tc->cold_lock);
+    PORT_SPIN_UNLOCK(&tc->cold_lock);
     if (rc == 0) {
         if (tc->stack_base) {
 #ifndef NVALGRIND
@@ -743,11 +796,11 @@ __attribute__((visibility("default"), hot, __noreturn__)) void thread_exit(void 
     /* Flush du last_created éventuel. */
     flush_last_created();
 
-    pthread_spin_lock(&cc->cold_lock);
+    PORT_SPIN_LOCK(&cc->cold_lock);
     cc->state = FINISHED;
     thread_hot_t *waiter_to_wake = cc->waiting;
     cc->waiting = NULL;
-    pthread_spin_unlock(&cc->cold_lock);
+    PORT_SPIN_UNLOCK(&cc->cold_lock);
 
     /* Différer le push du waiter via after_switch. Sinon, en mode multi-
      * worker avec push pouvant aller sur un autre pthread, le joineur

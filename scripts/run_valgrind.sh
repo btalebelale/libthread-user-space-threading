@@ -32,6 +32,10 @@ $VALGRIND ./tests/62-mutex 20
 $VALGRIND ./tests/63-mutex-equity
 $VALGRIND ./tests/64-mutex-join
 
+echo "===== SEMAPHORES ====="
+$VALGRIND ./tests/64-sem
+$VALGRIND ./tests/65-sem-prodcons
+
 echo "===== PREEMPTION ====="
 $VALGRIND ./tests/71-preemption 20
 

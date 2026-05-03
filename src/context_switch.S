@@ -1,6 +1,17 @@
 
 
 .text
+
+/* STACK_FREELIST_OFFSET = STACK_SIZE - 8 octets (slot intrusif en bas de
+ * pile pour la free-list LIFO). On reflète ici la macro C
+ * STACK_FREELIST_PTR(base) de thread_common.h. STACK_SIZE peut être
+ * surchargé via -DSTACK_SIZE au build (cf. Makefile, STACK_FLAG passé
+ * aussi aux .S). */
+#ifndef STACK_SIZE
+#define STACK_SIZE (64 * 1024)
+#endif
+#define STACK_FREELIST_OFFSET (STACK_SIZE - 8)
+
 .hidden thread_entry
 
 // void context_switch(void **old_rsp, void *new_rsp)
@@ -48,10 +59,10 @@ context_restore:
 .hidden thread_trampoline
 .type thread_trampoline, @function
 thread_trampoline:
-    movq  %r12, %rdi       
-    movq  %r13, %rsi         
+    movq  %r12, %rdi
+    movq  %r13, %rsi
     call  thread_entry
-    ud2                       
+    ud2
 .size thread_trampoline, .-thread_trampoline
 
 	// thread_yield inlined
@@ -97,14 +108,40 @@ thread_yield_asm:
     popq  %rbp
     popq  %rbx
 
+#ifndef MULTICORE
+    /* Consommation de pending_dead_stack post-context_switch.
+     * Inliné ici pour éviter un wrapper C (call/ret + endbr64).
+     * Hot path : pending_dead_stack est NULL la plupart du temps
+     * (uniquement non-NULL au yield qui suit un thread_exit).
+     *
+     * En MULTICORE, thread_yield_asm n'est pas appelé (thread_mn.c a son
+     * propre scheduling) et les symboles pending_dead_stack/stack_free_head
+     * ne sont pas exposés — donc on omet ce bloc. */
+    movq  pending_dead_stack(%rip), %rdx
+    testq %rdx, %rdx
+    jnz   .Lyield_release_pending
+#endif
     xorl  %eax, %eax
     retq
+
+#ifndef MULTICORE
+    .p2align 4
+.Lyield_release_pending:
+    movq  stack_free_head(%rip), %rcx
+    movq  %rcx, STACK_FREELIST_OFFSET(%rdx)   // *(stack + STACK_SIZE - 8) = old head
+    movq  %rdx, stack_free_head(%rip)
+    movq  $0, pending_dead_stack(%rip)
+    xorl  %eax, %eax
+    retq
+#endif
 
 .Lyield_alone:
-    xorl  %eax, %eax
-    retq
-
 .Lyield_inline_noop:
+    /* Pas de context_switch : pending_dead_stack ne peut pas avoir été
+     * posé depuis le dernier yield/exit du thread courant — la mise en
+     * place se fait dans thread_exit du thread précédent, dont le
+     * context_restore retourne dans une frame thread_yield_asm
+     * (consommée à la sortie ci-dessus). */
     xorl  %eax, %eax
     retq
 
@@ -130,11 +167,13 @@ thread_yield_asm:
 
 .size thread_yield_asm, .-thread_yield_asm
 
-#if !defined(USE_PREEMPTION) && !defined(USE_PRIORITY)                                                                                
+#if !defined(USE_PREEMPTION) && !defined(USE_PRIORITY)
+/* Mono sans préemption : alias direct, pas de wrapper C. La consommation
+ * de pending_dead_stack est inline ci-dessus. */
 .globl thread_yield
 .type thread_yield, @function
     .set thread_yield, thread_yield_asm
-.size thread_yield, .-thread_yield_asm                                                                                                
+.size thread_yield, .-thread_yield_asm
 #endif
 
 

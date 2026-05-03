@@ -39,7 +39,7 @@ __attribute__((visibility("hidden"))) extern void flush_last_created_pub(void);
 
 static void unlock_spinlock_cb(void *arg)
 {
-    pthread_spin_unlock((pthread_spinlock_t *)arg);
+    PORT_SPIN_UNLOCK((port_spin_t *)arg);
 }
 #else
 #define SYNC_ME() (current)
@@ -77,7 +77,7 @@ __attribute__((visibility("default"))) int thread_mutex_init(thread_mutex_t *mut
     m->wait_head = NULL;
     m->wait_tail = NULL;
 #ifdef MULTICORE
-    pthread_spin_init(&m->lock, PTHREAD_PROCESS_PRIVATE);
+    PORT_SPIN_INIT(&m->lock);
 #endif
     return 0;
 }
@@ -86,7 +86,7 @@ __attribute__((visibility("default"))) int thread_mutex_destroy(thread_mutex_t *
 {
 #ifdef MULTICORE
     mutex_internal_t *m = MUTEX(mutex);
-    pthread_spin_destroy(&m->lock);
+    PORT_SPIN_DESTROY(&m->lock);
 #else
     (void)mutex;
 #endif
@@ -100,13 +100,13 @@ __attribute__((visibility("default"), hot)) int thread_mutex_lock(thread_mutex_t
     mutex_internal_t *m = MUTEX(mutex);
 
 #ifdef MULTICORE
-    pthread_spin_lock(&m->lock);
+    PORT_SPIN_LOCK(&m->lock);
 #endif
     if (__builtin_expect(!m->locked, 1))
     {
         m->locked = 1;
 #ifdef MULTICORE
-        pthread_spin_unlock(&m->lock);
+        PORT_SPIN_UNLOCK(&m->lock);
 #endif
         preempt_restore(&old);
         return 0;
@@ -152,20 +152,20 @@ __attribute__((visibility("default"), hot)) int thread_mutex_unlock(thread_mutex
     mutex_internal_t *m = MUTEX(mutex);
 
 #ifdef MULTICORE
-    pthread_spin_lock(&m->lock);
+    PORT_SPIN_LOCK(&m->lock);
 #endif
     thread_hot_t *w = wq_pop(&m->wait_head, &m->wait_tail);
     if (w == NULL)
     {
         m->locked = 0;
 #ifdef MULTICORE
-        pthread_spin_unlock(&m->lock);
+        PORT_SPIN_UNLOCK(&m->lock);
 #endif
         preempt_restore(&old);
         return 0;
     }
 #ifdef MULTICORE
-    pthread_spin_unlock(&m->lock);
+    PORT_SPIN_UNLOCK(&m->lock);
 #endif
     /* Le mutex reste verrouillé : ownership transmis au thread réveillé. */
     SYNC_WAKE(w);
@@ -183,7 +183,7 @@ __attribute__((visibility("default"))) int thread_sem_init(thread_sem_t *sem, in
     s->wait_head = NULL;
     s->wait_tail = NULL;
 #ifdef MULTICORE
-    pthread_spin_init(&s->lock, PTHREAD_PROCESS_PRIVATE);
+    PORT_SPIN_INIT(&s->lock);
 #endif
     return 0;
 }
@@ -192,7 +192,7 @@ __attribute__((visibility("default"))) int thread_sem_destroy(thread_sem_t *sem)
 {
 #ifdef MULTICORE
     sem_internal_t *s = SEM(sem);
-    pthread_spin_destroy(&s->lock);
+    PORT_SPIN_DESTROY(&s->lock);
 #else
     (void)sem;
 #endif
@@ -206,13 +206,13 @@ __attribute__((visibility("default"), hot)) int thread_sem_wait(thread_sem_t *se
     sem_internal_t *s = SEM(sem);
 
 #ifdef MULTICORE
-    pthread_spin_lock(&s->lock);
+    PORT_SPIN_LOCK(&s->lock);
 #endif
     s->count--;
     if (s->count >= 0)
     {
 #ifdef MULTICORE
-        pthread_spin_unlock(&s->lock);
+        PORT_SPIN_UNLOCK(&s->lock);
 #endif
         preempt_restore(&old);
         return 0;
@@ -255,14 +255,14 @@ __attribute__((visibility("default"), hot)) int thread_sem_post(thread_sem_t *se
     sem_internal_t *s = SEM(sem);
 
 #ifdef MULTICORE
-    pthread_spin_lock(&s->lock);
+    PORT_SPIN_LOCK(&s->lock);
 #endif
     s->count++;
     thread_hot_t *w = NULL;
     if (s->count <= 0)
         w = wq_pop(&s->wait_head, &s->wait_tail);
 #ifdef MULTICORE
-    pthread_spin_unlock(&s->lock);
+    PORT_SPIN_UNLOCK(&s->lock);
 #endif
 
     if (w) SYNC_WAKE(w);
@@ -286,7 +286,7 @@ __attribute__((visibility("default"))) int thread_kill(thread_t target, int sig)
     thread_hot_t *to_wake = NULL;
 
 #ifdef MULTICORE
-    pthread_spin_lock(&tc->cold_lock);
+    PORT_SPIN_LOCK(&tc->cold_lock);
 #endif
     tc->pending_sigs |= bit;
     if (tc->sig_waiting && (tc->wait_mask & bit))
@@ -298,7 +298,7 @@ __attribute__((visibility("default"))) int thread_kill(thread_t target, int sig)
         to_wake = t;
     }
 #ifdef MULTICORE
-    pthread_spin_unlock(&tc->cold_lock);
+    PORT_SPIN_UNLOCK(&tc->cold_lock);
 #endif
 
     if (to_wake) SYNC_WAKE(to_wake);
@@ -315,7 +315,7 @@ __attribute__((visibility("default"))) int thread_sigwait(thread_sigset_t mask, 
     thread_cold_t *cc = THREAD_COLD(SYNC_ME());
 
 #ifdef MULTICORE
-    pthread_spin_lock(&cc->cold_lock);
+    PORT_SPIN_LOCK(&cc->cold_lock);
 #endif
     thread_sigset_t hit = cc->pending_sigs & mask;
     if (hit)
@@ -323,7 +323,7 @@ __attribute__((visibility("default"))) int thread_sigwait(thread_sigset_t mask, 
         int s = __builtin_ctz(hit);
         cc->pending_sigs &= ~(thread_sigset_t)(1u << s);
 #ifdef MULTICORE
-        pthread_spin_unlock(&cc->cold_lock);
+        PORT_SPIN_UNLOCK(&cc->cold_lock);
 #endif
         if (sig) *sig = s;
         preempt_restore(&old);
