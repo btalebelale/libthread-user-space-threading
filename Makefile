@@ -5,7 +5,7 @@ STACK_FLAG = $(if $(STACK_SIZE),-DSTACK_SIZE=$(STACK_SIZE),)
 EXTRA_CFLAGS ?=
 CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -fno-plt -DNDEBUG -I./src $(VALGRIND_FLAG) $(STACK_FLAG) $(EXTRA_CFLAGS)
 
-LIB_SRC_C = src/thread.c src/scheduler.o
+LIB_SRC_C = src/thread.c src/thread_sync.c
 LIB_SRC_S = src/context_switch.S
 LIB_OBJ   = $(LIB_SRC_C:.c=.o) $(LIB_SRC_S:.S=.o)
 LIB_NAME = libthread.so
@@ -31,7 +31,9 @@ TEST_BINS = tests/01-main \
 			tests/65-sem-prodcons \
             tests/71-preemption  \
             tests/81-deadlock \
-			tests/124-signals  
+			tests/124-signals \
+			tests/131-priority
+
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
