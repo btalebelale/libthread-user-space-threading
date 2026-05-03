@@ -68,45 +68,9 @@ endif
 
 CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden $(ARCH_CFLAGS) -DNDEBUG -I./src $(PORT_CFLAGS) $(VALGRIND_FLAG) $(STACK_FLAG) $(MULTICORE_CFLAGS) $(EXTRA_CFLAGS)
 
-<<<<<<< Updated upstream
-LIB_SRC_C = src/thread.c src/thread_sync.c
-LIB_SRC_S = src/context_switch.S
 LIB_OBJ   = $(LIB_SRC_C:.c=.o) $(LIB_SRC_S:.S=.o)
 LIB_NAME = libthread.so
 
-TEST_BINS = tests/01-main \
-            tests/02-switch \
-            tests/03-equity \
-            tests/11-join \
-            tests/12-join-main \
-            tests/13-join-switch \
-            tests/21-create-many \
-            tests/22-create-many-recursive \
-            tests/23-create-many-once \
-            tests/31-switch-many \
-            tests/32-switch-many-join \
-            tests/33-switch-many-cascade \
-            tests/51-fibonacci \
-            tests/61-mutex \
-            tests/62-mutex \
-            tests/63-mutex-equity \
-            tests/64-mutex-join \
-			tests/64-sem \
-			tests/65-sem-prodcons \
-            tests/71-preemption  \
-            tests/81-deadlock \
-			tests/124-signals \
-			tests/131-priority
-
-=======
-LIB_OBJ   = $(LIB_SRC_C:.c=.o) $(LIB_SRC_S:.S=.o)
-LIB_NAME = libthread.so
-
-# Bascule mono <-> MULTICORE : on évalue le variant à la phase de parsing
-# (avant calcul du DAG) pour pouvoir purger les .o stale et écrire le stamp
-# AVANT que make ne décide quoi recompiler. Sans ça, context_switch.o (compilé
-# sans MULTICORE_CFLAGS) garde l'alias thread_yield -> thread_yield_asm et
-# entre en collision avec le thread_yield C de thread_mn.c.
 BUILD_VARIANT := $(if $(MULTICORE_CFLAGS),mn,mono)-$(if $(filter 1,$(PORT_FAST_PATH)),fast,fallback)
 BUILD_STAMP   := src/.build-variant
 PREV_VARIANT  := $(shell cat $(BUILD_STAMP) 2>/dev/null)
@@ -159,9 +123,7 @@ else
 TEST_BINS = $(BASE_TEST_BINS) $(MONO_TEST_BINS)
 endif
 
-# Liste exhaustive pour le clean (indépendante du mode)
 ALL_TEST_BINS = $(BASE_TEST_BINS) $(MONO_TEST_BINS) $(MN_TEST_BINS)
->>>>>>> Stashed changes
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
 
