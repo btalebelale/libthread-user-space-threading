@@ -1,7 +1,7 @@
 #include "thread.h"
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <assert.h>
 
 static thread_t sender_id;
 static thread_t waiter_id;

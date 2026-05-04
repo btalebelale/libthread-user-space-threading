@@ -15,7 +15,8 @@
 
 #define TOTAL_WORK 10000000L
 
-struct padded_arg {
+struct padded_arg
+{
     long iters;
     volatile unsigned long result;
     char pad[48];
@@ -33,8 +34,7 @@ static void *thfunc(void *arg)
 
 static long timespec_us(struct timespec *start, struct timespec *end)
 {
-    return (end->tv_sec - start->tv_sec) * 1000000L
-         + (end->tv_nsec - start->tv_nsec) / 1000;
+    return (end->tv_sec - start->tv_sec) * 1000000L + (end->tv_nsec - start->tv_nsec) / 1000;
 }
 
 int main(void)
@@ -46,13 +46,15 @@ int main(void)
     printf("%-5s %10s %10s\n", "N", "time_us", "efficiency");
     printf("----- ---------- ----------\n");
 
-    for (int c = 0; c < n_configs; c++) {
+    for (int c = 0; c < n_configs; c++)
+    {
         int nt = thread_counts[c];
         long iters_per = TOTAL_WORK / nt;
 
         thread_t *th = malloc(nt * sizeof(*th));
         struct padded_arg *args = calloc(nt, sizeof(*args));
-        if (!th || !args) {
+        if (!th || !args)
+        {
             perror("malloc");
             return EXIT_FAILURE;
         }
@@ -61,12 +63,14 @@ int main(void)
         int err;
 
         clock_gettime(CLOCK_MONOTONIC, &ts1);
-        for (int i = 0; i < nt; i++) {
+        for (int i = 0; i < nt; i++)
+        {
             args[i].iters = iters_per;
             err = thread_create(&th[i], thfunc, &args[i]);
             assert(!err);
         }
-        for (int i = 0; i < nt; i++) {
+        for (int i = 0; i < nt; i++)
+        {
             err = thread_join(th[i], NULL);
             assert(!err);
         }
@@ -76,9 +80,8 @@ int main(void)
         if (c == 0)
             t1_time = us;
 
-        double efficiency = (t1_time > 0 && us > 0)
-                          ? 100.0 * (double)t1_time / ((double)nt * (double)us)
-                          : 0.0;
+        double efficiency =
+            (t1_time > 0 && us > 0) ? 100.0 * (double)t1_time / ((double)nt * (double)us) : 0.0;
 
         printf("N=%2d  %10ld    %5.1f%%\n", nt, us, efficiency);
         printf("GRAPH;123;%d;%ld\n", nt, us);

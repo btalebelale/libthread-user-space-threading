@@ -9,19 +9,19 @@
  */
 #include "thread.h"
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 #include <sys/time.h>
 
-#define BUF_SIZE  16
-#define N_ITEMS   10000
-#define N_PROD    4
-#define N_CONS    4
+#define BUF_SIZE 16
+#define N_ITEMS 10000
+#define N_PROD 4
+#define N_CONS 4
 
 static int buffer[BUF_SIZE];
-static int buf_in  = 0;
+static int buf_in = 0;
 static int buf_out = 0;
 
 static thread_sem_t mutex_sem;
@@ -35,7 +35,8 @@ static int consumed_bitmap[N_ITEMS];
 static void *producer(void *arg)
 {
     (void)arg;
-    for (;;) {
+    for (;;)
+    {
         int item = __atomic_fetch_add(&produced_count, 1, __ATOMIC_SEQ_CST);
         if (item >= N_ITEMS)
             break;
@@ -56,7 +57,8 @@ static void *producer(void *arg)
 static void *consumer(void *arg)
 {
     int count = (int)(intptr_t)arg;
-    for (int i = 0; i < count; i++) {
+    for (int i = 0; i < count; i++)
+    {
         thread_sem_wait(&full_sem);
         thread_sem_wait(&mutex_sem);
 
@@ -85,21 +87,24 @@ int main(void)
     struct timeval tv1, tv2;
     gettimeofday(&tv1, NULL);
 
-    for (int i = 0; i < N_PROD; i++) {
+    for (int i = 0; i < N_PROD; i++)
+    {
         err = thread_create(&prod[i], producer, NULL);
         assert(!err);
     }
-    for (int i = 0; i < N_CONS; i++) {
-        err = thread_create(&cons[i], consumer,
-                            (void *)(intptr_t)(N_ITEMS / N_CONS));
+    for (int i = 0; i < N_CONS; i++)
+    {
+        err = thread_create(&cons[i], consumer, (void *)(intptr_t)(N_ITEMS / N_CONS));
         assert(!err);
     }
 
-    for (int i = 0; i < N_PROD; i++) {
+    for (int i = 0; i < N_PROD; i++)
+    {
         err = thread_join(prod[i], NULL);
         assert(!err);
     }
-    for (int i = 0; i < N_CONS; i++) {
+    for (int i = 0; i < N_CONS; i++)
+    {
         err = thread_join(cons[i], NULL);
         assert(!err);
     }
@@ -110,28 +115,33 @@ int main(void)
     thread_sem_destroy(&empty_sem);
     thread_sem_destroy(&full_sem);
 
-    unsigned long us = (tv2.tv_sec - tv1.tv_sec) * 1000000
-                     + (tv2.tv_usec - tv1.tv_usec);
+    unsigned long us = (tv2.tv_sec - tv1.tv_sec) * 1000000 + (tv2.tv_usec - tv1.tv_usec);
 
     int ok = 1;
-    for (int i = 0; i < N_ITEMS; i++) {
-        if (!produced_bitmap[i]) {
+    for (int i = 0; i < N_ITEMS; i++)
+    {
+        if (!produced_bitmap[i])
+        {
             printf("ERREUR: item %d non produit\n", i);
             ok = 0;
         }
-        if (!consumed_bitmap[i]) {
+        if (!consumed_bitmap[i])
+        {
             printf("ERREUR: item %d non consomme\n", i);
             ok = 0;
         }
     }
 
-    if (ok) {
+    if (ok)
+    {
         printf("Producteur/consommateur multicore OK: %d items, "
                "%d prod, %d cons en %lu us\n",
                N_ITEMS, N_PROD, N_CONS, us);
         printf("GRAPH;103;%d;%lu\n", N_ITEMS, us);
         return EXIT_SUCCESS;
-    } else {
+    }
+    else
+    {
         printf("ERREUR: items perdus ou dupliques\n");
         return EXIT_FAILURE;
     }

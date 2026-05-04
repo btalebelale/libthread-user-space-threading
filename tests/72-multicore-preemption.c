@@ -35,9 +35,10 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define DURATION_US 300000  /* 300 ms */
+#define DURATION_US 300000 /* 300 ms */
 
-struct padded_counter {
+struct padded_counter
+{
     volatile long count;
     char pad[64 - sizeof(long)];
 };
@@ -57,7 +58,8 @@ static long now_us(void)
 __attribute__((used)) static void *busy(void *arg)
 {
     int id = (intptr_t)arg;
-    while (!stop_flag) {
+    while (!stop_flag)
+    {
         counters[id].count++;
     }
     return NULL;
@@ -68,29 +70,46 @@ __attribute__((used)) static void *busy(void *arg)
 static long run_busy_phase(int n, long duration_us)
 {
     thread_t *th = malloc(n * sizeof(*th));
-    if (!th) { perror("malloc"); exit(EXIT_FAILURE); }
-    for (int i = 0; i < n; i++) counters[i].count = 0;
+    if (!th)
+    {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    for (int i = 0; i < n; i++)
+        counters[i].count = 0;
 
     stop_flag = 0;
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; i++)
+    {
         int err = thread_create(&th[i], busy, (void *)(intptr_t)i);
-        if (err != 0) { fprintf(stderr, "thread_create failed\n"); exit(EXIT_FAILURE); }
+        if (err != 0)
+        {
+            fprintf(stderr, "thread_create failed\n");
+            exit(EXIT_FAILURE);
+        }
     }
 
     long t_start = now_us();
-    while (now_us() - t_start < duration_us) {
+    while (now_us() - t_start < duration_us)
+    {
         thread_yield();
     }
     stop_flag = 1;
 
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; i++)
+    {
         int err = thread_join(th[i], NULL);
-        if (err != 0) { fprintf(stderr, "thread_join failed\n"); exit(EXIT_FAILURE); }
+        if (err != 0)
+        {
+            fprintf(stderr, "thread_join failed\n");
+            exit(EXIT_FAILURE);
+        }
     }
     free(th);
 
     long total = 0;
-    for (int i = 0; i < n; i++) total += counters[i].count;
+    for (int i = 0; i < n; i++)
+        total += counters[i].count;
     return total;
 }
 
@@ -98,13 +117,16 @@ int main(int argc, char *argv[])
 {
     long nworkers_env = 0;
     const char *env = getenv("LIBTHREAD_WORKERS");
-    if (env) nworkers_env = atol(env);
+    if (env)
+        nworkers_env = atol(env);
     if (nworkers_env <= 0)
         nworkers_env = sysconf(_SC_NPROCESSORS_ONLN);
-    if (nworkers_env <= 0) nworkers_env = 4;
+    if (nworkers_env <= 0)
+        nworkers_env = 4;
 
     int nb = (argc >= 2) ? atoi(argv[1]) : (int)(4 * nworkers_env);
-    if (nb < 2) {
+    if (nb < 2)
+    {
         fprintf(stderr, "nombre de threads invalide (%d)\n", nb);
         return EXIT_FAILURE;
     }
@@ -113,15 +135,18 @@ int main(int argc, char *argv[])
 
     /* Le tableau de compteurs est dimensionné au max (nb threads). */
     counters = calloc(nb, sizeof(*counters));
-    if (!counters) { perror("calloc"); return EXIT_FAILURE; }
+    if (!counters)
+    {
+        perror("calloc");
+        return EXIT_FAILURE;
+    }
 
     /* Phase 1 — Calibrer la capacité d'1 thread compute solo.
      * Un seul thread, mêmes opérations que la phase 2 → comparaison juste.
      * On laisse seulement (nworkers-1) workers idle pour ce test, le main
      * yield et laisse le thread compute monopoliser un worker. */
     long single_total = run_busy_phase(1, DURATION_US);
-    printf("Baseline 1 thread solo : %ld counts en %d ms\n",
-           single_total, DURATION_US / 1000);
+    printf("Baseline 1 thread solo : %ld counts en %d ms\n", single_total, DURATION_US / 1000);
 
     /* Phase 2 — N threads compute en parallèle. */
     long t_start = now_us();
@@ -130,17 +155,21 @@ int main(int argc, char *argv[])
 
     int progressed = 0;
     long min_count = counters[0].count, max_count = counters[0].count;
-    for (int i = 0; i < nb; i++) {
+    for (int i = 0; i < nb; i++)
+    {
         long c = counters[i].count;
-        if (c > 0) progressed++;
-        if (c < min_count) min_count = c;
-        if (c > max_count) max_count = c;
+        if (c > 0)
+            progressed++;
+        if (c < min_count)
+            min_count = c;
+        if (c > max_count)
+            max_count = c;
     }
     int idle_threads = nb - progressed;
     double parallel_factor = (double)total / (double)single_total;
 
-    printf("Multi-thread : %d threads, %ld total counts en ~%ld ms\n",
-           nb, total, real_duration / 1000);
+    printf("Multi-thread : %d threads, %ld total counts en ~%ld ms\n", nb, total,
+           real_duration / 1000);
     printf("Threads ayant progressé : %d/%d (idle: %d)\n", progressed, nb, idle_threads);
     printf("Min: %ld, Max: %ld, ratio min/max: %.3f\n", min_count, max_count,
            max_count > 0 ? (double)min_count / (double)max_count : 0.0);
@@ -150,21 +179,25 @@ int main(int argc, char *argv[])
 
     /* Critère 1 — préemption : aucun thread ne doit être resté à zéro.
      * Sans préemption, exactement (nb - nworkers) threads seraient idle. */
-    if (idle_threads > 0) {
+    if (idle_threads > 0)
+    {
         printf("ÉCHEC: %d threads n'ont jamais été élus — la préemption "
-               "ne fonctionne pas (ou pas sur tous les workers).\n", idle_threads);
+               "ne fonctionne pas (ou pas sur tous les workers).\n",
+               idle_threads);
         return EXIT_FAILURE;
     }
 
     /* Critère 2 — multi-cœur : throughput agrégé > 1.5× un thread solo.
      * Sur un système avec >= 2 workers réels, on s'attend à 1.5-Nx. */
-    if (nworkers_env >= 2 && parallel_factor < 1.5) {
-        printf("ÉCHEC: parallélisme %.2fx insuffisant pour %ld workers.\n",
-               parallel_factor, nworkers_env);
+    if (nworkers_env >= 2 && parallel_factor < 1.5)
+    {
+        printf("ÉCHEC: parallélisme %.2fx insuffisant pour %ld workers.\n", parallel_factor,
+               nworkers_env);
         return EXIT_FAILURE;
     }
 
     printf("OK: préemption + multi-cœur fonctionnent (%d threads tous "
-           "progressent, %.2fx parallélisme).\n", nb, parallel_factor);
+           "progressent, %.2fx parallélisme).\n",
+           nb, parallel_factor);
     return EXIT_SUCCESS;
 }

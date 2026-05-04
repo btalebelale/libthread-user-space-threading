@@ -20,7 +20,8 @@ static thread_sem_t sems[N_STAGES + 1];
 static thread_mutex_t mutex;
 static long result = 0;
 
-struct stage_arg {
+struct stage_arg
+{
     int stage_id;
 };
 
@@ -29,7 +30,8 @@ static void *stage_func(void *arg)
     struct stage_arg *sa = (struct stage_arg *)arg;
     int id = sa->stage_id;
 
-    for (int r = 0; r < N_ROUNDS; r++) {
+    for (int r = 0; r < N_ROUNDS; r++)
+    {
         thread_sem_wait(&sems[id]);
         thread_mutex_lock(&mutex);
         result += id;
@@ -45,7 +47,8 @@ int main(void)
     thread_mutex_init(&mutex);
 
     int err;
-    for (int i = 0; i <= N_STAGES; i++) {
+    for (int i = 0; i <= N_STAGES; i++)
+    {
         err = thread_sem_init(&sems[i], 0);
         assert(!err);
     }
@@ -53,7 +56,8 @@ int main(void)
     struct stage_arg args[N_STAGES];
     thread_t threads[N_STAGES];
 
-    for (int i = 0; i < N_STAGES; i++) {
+    for (int i = 0; i < N_STAGES; i++)
+    {
         args[i].stage_id = i;
         err = thread_create(&threads[i], stage_func, &args[i]);
         assert(!err);
@@ -61,12 +65,14 @@ int main(void)
 
     /* Drive the pipeline: post sem[0] to start each round,
      * wait on sem[N_STAGES] for completion */
-    for (int r = 0; r < N_ROUNDS; r++) {
+    for (int r = 0; r < N_ROUNDS; r++)
+    {
         thread_sem_post(&sems[0]);
         thread_sem_wait(&sems[N_STAGES]);
     }
 
-    for (int i = 0; i < N_STAGES; i++) {
+    for (int i = 0; i < N_STAGES; i++)
+    {
         err = thread_join(threads[i], NULL);
         assert(!err);
     }
@@ -76,12 +82,13 @@ int main(void)
     thread_mutex_destroy(&mutex);
 
     long expected = (long)N_ROUNDS * (N_STAGES * (N_STAGES - 1) / 2);
-    if (result != expected) {
+    if (result != expected)
+    {
         printf("FAIL: result = %ld, expected %ld\n", result, expected);
         return EXIT_FAILURE;
     }
 
-    printf("cascade mutex+sem OK: %d stages x %d rounds, result = %ld\n",
-           N_STAGES, N_ROUNDS, result);
+    printf("cascade mutex+sem OK: %d stages x %d rounds, result = %ld\n", N_STAGES, N_ROUNDS,
+           result);
     return EXIT_SUCCESS;
 }

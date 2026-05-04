@@ -18,7 +18,8 @@
 static thread_mutex_t mutexes[N_MUTEXES];
 static int counters[N_MUTEXES];
 
-struct thread_arg {
+struct thread_arg
+{
     int id;
     int iters;
 };
@@ -27,7 +28,8 @@ static void *thfunc(void *arg)
 {
     struct thread_arg *ta = (struct thread_arg *)arg;
     int idx = ta->id % N_MUTEXES;
-    for (int i = 0; i < ta->iters; i++) {
+    for (int i = 0; i < ta->iters; i++)
+    {
         thread_mutex_lock(&mutexes[idx]);
         counters[idx]++;
         thread_mutex_unlock(&mutexes[idx]);
@@ -43,7 +45,8 @@ int main(int argc, char *argv[])
         nb = atoi(argv[1]);
     if (argc >= 3)
         iters = atoi(argv[2]);
-    if (nb <= 0 || iters <= 0) {
+    if (nb <= 0 || iters <= 0)
+    {
         fprintf(stderr, "parametres invalides\n");
         return EXIT_FAILURE;
     }
@@ -53,7 +56,8 @@ int main(int argc, char *argv[])
 
     thread_t *th = malloc(nb * sizeof(*th));
     struct thread_arg *args = malloc(nb * sizeof(*args));
-    if (!th || !args) {
+    if (!th || !args)
+    {
         perror("malloc");
         return EXIT_FAILURE;
     }
@@ -62,14 +66,16 @@ int main(int argc, char *argv[])
     gettimeofday(&tv1, NULL);
 
     int err;
-    for (int i = 0; i < nb; i++) {
+    for (int i = 0; i < nb; i++)
+    {
         args[i].id = i;
         args[i].iters = iters;
         err = thread_create(&th[i], thfunc, &args[i]);
         assert(!err);
     }
 
-    for (int i = 0; i < nb; i++) {
+    for (int i = 0; i < nb; i++)
+    {
         err = thread_join(th[i], NULL);
         assert(!err);
     }
@@ -79,8 +85,7 @@ int main(int argc, char *argv[])
     for (int i = 0; i < N_MUTEXES; i++)
         thread_mutex_destroy(&mutexes[i]);
 
-    unsigned long us = (tv2.tv_sec - tv1.tv_sec) * 1000000
-                     + (tv2.tv_usec - tv1.tv_usec);
+    unsigned long us = (tv2.tv_sec - tv1.tv_sec) * 1000000 + (tv2.tv_usec - tv1.tv_usec);
 
     long total = 0;
     for (int i = 0; i < N_MUTEXES; i++)
@@ -90,11 +95,14 @@ int main(int argc, char *argv[])
     free(args);
 
     long expected = (long)nb * iters;
-    if (total == expected) {
-        printf("Stress mutex OK: %d threads * %d iters = %ld ops en %lu us\n",
-               nb, iters, expected, us);
+    if (total == expected)
+    {
+        printf("Stress mutex OK: %d threads * %d iters = %ld ops en %lu us\n", nb, iters, expected,
+               us);
         return EXIT_SUCCESS;
-    } else {
+    }
+    else
+    {
         printf("ERREUR: attendu %ld, obtenu %ld\n", expected, total);
         return EXIT_FAILURE;
     }

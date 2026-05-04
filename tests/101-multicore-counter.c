@@ -20,7 +20,8 @@ static thread_mutex_t lock;
 
 static void *thfunc(void *dummy __attribute__((unused)))
 {
-    for (int i = 0; i < ITERS; i++) {
+    for (int i = 0; i < ITERS; i++)
+    {
         thread_mutex_lock(&lock);
         counter++;
         thread_mutex_unlock(&lock);
@@ -33,13 +34,15 @@ int main(int argc, char *argv[])
     int nb = 8;
     if (argc >= 2)
         nb = atoi(argv[1]);
-    if (nb <= 0) {
+    if (nb <= 0)
+    {
         fprintf(stderr, "nombre de threads invalide\n");
         return EXIT_FAILURE;
     }
 
     thread_t *th = malloc(nb * sizeof(*th));
-    if (!th) {
+    if (!th)
+    {
         perror("malloc");
         return EXIT_FAILURE;
     }
@@ -50,12 +53,14 @@ int main(int argc, char *argv[])
     struct timeval tv1, tv2;
     gettimeofday(&tv1, NULL);
 
-    for (int i = 0; i < nb; i++) {
+    for (int i = 0; i < nb; i++)
+    {
         err = thread_create(&th[i], thfunc, NULL);
         assert(!err);
     }
 
-    for (int i = 0; i < nb; i++) {
+    for (int i = 0; i < nb; i++)
+    {
         err = thread_join(th[i], NULL);
         assert(!err);
     }
@@ -65,16 +70,17 @@ int main(int argc, char *argv[])
     thread_mutex_destroy(&lock);
     free(th);
 
-    unsigned long us = (tv2.tv_sec - tv1.tv_sec) * 1000000
-                     + (tv2.tv_usec - tv1.tv_usec);
+    unsigned long us = (tv2.tv_sec - tv1.tv_sec) * 1000000 + (tv2.tv_usec - tv1.tv_usec);
 
     int expected = nb * ITERS;
-    if (counter == expected) {
-        printf("Compteur correct: %d threads * %d iters = %d en %lu us\n",
-               nb, ITERS, counter, us);
+    if (counter == expected)
+    {
+        printf("Compteur correct: %d threads * %d iters = %d en %lu us\n", nb, ITERS, counter, us);
         printf("GRAPH;101;%d;%lu\n", nb, us);
         return EXIT_SUCCESS;
-    } else {
+    }
+    else
+    {
         printf("ERREUR: attendu %d, obtenu %d\n", expected, counter);
         return EXIT_FAILURE;
     }

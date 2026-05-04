@@ -29,28 +29,32 @@ int main(int argc, char *argv[])
     assert(threads != NULL);
 
     int err;
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; i++)
+    {
         err = thread_create(&threads[i], thfunc, (void *)(unsigned long)i);
         assert(!err);
     }
 
     int mismatches = 0;
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; i++)
+    {
         void *res = NULL;
         err = thread_join(threads[i], &res);
         assert(!err);
 
         unsigned long expected = (unsigned long)i * 0x1234567890ABCDEFULL + 0xDEAD;
-        if ((unsigned long)res != expected) {
-            fprintf(stderr, "MISMATCH thread %d: got 0x%lx, expected 0x%lx\n",
-                    i, (unsigned long)res, expected);
+        if ((unsigned long)res != expected)
+        {
+            fprintf(stderr, "MISMATCH thread %d: got 0x%lx, expected 0x%lx\n", i,
+                    (unsigned long)res, expected);
             mismatches++;
         }
     }
 
     free(threads);
 
-    if (mismatches > 0) {
+    if (mismatches > 0)
+    {
         printf("FAIL: %d/%d join value mismatches\n", mismatches, n);
         return EXIT_FAILURE;
     }

@@ -1,22 +1,21 @@
 #include "thread.h"
-#include <stdio.h>
-#include <stdlib.h>
 #include <assert.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 static thread_sem_t sem;
 static int counter = 0;
 
 /* Test 1 : sémaphore binaire (mutex) */
-static void *inc(void *arg) {
+static void *inc(void *arg)
+{
     (void)arg;
     thread_sem_wait(&sem);
     counter++;
     thread_sem_post(&sem);
     return NULL;
 }
-
-
 
 int main(void)
 {
@@ -31,7 +30,7 @@ int main(void)
     printf("Test 1 (mutex binaire) OK : counter = %d\n", counter);
     thread_sem_destroy(&sem);
 
-    // Test 2 : sémaphore compteur (N ) 
+    // Test 2 : sémaphore compteur (N )
     int tokens = 4;
     thread_sem_t csem;
     thread_sem_init(&csem, tokens);
