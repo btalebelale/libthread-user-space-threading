@@ -11,6 +11,10 @@
 #include <string.h>
 #include <sys/time.h>
 #include <errno.h>
+#ifndef __x86_64__
+#include <ucontext.h>
+__attribute__((visibility("hidden"))) extern void portable_thread_start(void);
+#endif
 
 static void *stack_arena;
 static int stack_arena_next;
@@ -232,6 +236,7 @@ static int stack_color_counter;
 
 static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
 {
+#ifdef __x86_64__
     uintptr_t sp = (uintptr_t)stack_base + STACK_SIZE;
 
     sp -= ((unsigned)stack_color_counter++ & 0xFF) * 64;
@@ -253,6 +258,21 @@ static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
     VALGRIND_MAKE_MEM_DEFINED(s, 7 * sizeof(void *));
 
     return s;
+#else
+    /* Fallback ucontext : on place le ucontext_t juste après la guard page,
+     * et la pile utilisable suit. func/arg sont déjà dans le cold (écrits
+     * par flush_last_created_slow) — la trampoline les y relit. */
+    (void)func; (void)arg; (void)stack_color_counter;
+    ucontext_t *uc = (ucontext_t *)((char *)stack_base + STACK_GUARD);
+    char  *ss_sp   = (char *)uc + sizeof(ucontext_t);
+    size_t ss_size = STACK_SIZE - STACK_GUARD - sizeof(ucontext_t);
+    getcontext(uc);
+    uc->uc_link          = NULL;
+    uc->uc_stack.ss_sp   = ss_sp;
+    uc->uc_stack.ss_size = ss_size;
+    makecontext(uc, portable_thread_start, 0);
+    return uc;
+#endif
 }
 
 __attribute__((cold)) static void clean_exit(void)
@@ -313,7 +333,15 @@ __attribute__((constructor, cold)) static void init_system(void)
         perror("thread_alloc main");
         exit(1);
     }
+#ifdef __x86_64__
     current->rsp = NULL;
+#else
+    /* Sur fallback, t->rsp = ucontext_t*. Le main n'a pas de pile allouée
+     * par nous, mais swapcontext a besoin d'un ucontext_t où sauvegarder
+     * son état lors du premier switch out — d'où ce slot statique. */
+    static ucontext_t main_uc;
+    current->rsp = &main_uc;
+#endif
     current->sched_next = current;
     current->sched_prev = current;
     current->priority = THREAD_PRIORITY_DEFAULT;
@@ -322,6 +350,7 @@ __attribute__((constructor, cold)) static void init_system(void)
     thread_cold_reset(cc);
     cc->started = 1;  /* main tourne déjà */
 
+#ifdef __x86_64__
     uintptr_t sp = (uintptr_t)(exit_stack + sizeof(exit_stack));
     sp &= ~(uintptr_t)0xF;
     void **s = (void **)sp;
@@ -334,6 +363,15 @@ __attribute__((constructor, cold)) static void init_system(void)
     *(--s) = 0;
     exit_rsp = s;
     VALGRIND_MAKE_MEM_DEFINED(s, 7 * sizeof(void *));
+#else
+    static ucontext_t exit_uc;
+    getcontext(&exit_uc);
+    exit_uc.uc_link          = NULL;
+    exit_uc.uc_stack.ss_sp   = exit_stack;
+    exit_uc.uc_stack.ss_size = sizeof(exit_stack);
+    makecontext(&exit_uc, clean_exit, 0);
+    exit_rsp = &exit_uc;
+#endif
 
     preempt_init();
 }

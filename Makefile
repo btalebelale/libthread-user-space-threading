@@ -23,8 +23,16 @@ endif
 
 CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -fno-plt -DNDEBUG -I./src $(VALGRIND_FLAG) $(STACK_FLAG) $(MULTICORE_CFLAGS) $(EXTRA_CFLAGS)
 
-LIB_SRC_S = src/context_switch.S
-LIB_OBJ   = $(LIB_SRC_C:.c=.o) $(LIB_SRC_S:.S=.o)
+# Sélection arch : asm x86_64 sinon fallback ucontext (Linux/POSIX).
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),x86_64)
+  LIB_SRC_S = src/context_switch.S
+  LIB_OBJ_ARCH = src/context_switch.o
+else
+  LIB_SRC_S = src/context_switch_portable.c
+  LIB_OBJ_ARCH = src/context_switch_portable.o
+endif
+LIB_OBJ   = $(LIB_SRC_C:.c=.o) $(LIB_OBJ_ARCH)
 LIB_NAME = libthread.so
 
 # Bascule mono <-> MULTICORE : on évalue le variant à la phase de parsing
