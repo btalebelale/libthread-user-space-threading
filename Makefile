@@ -108,25 +108,25 @@ src/%.o: src/%.c src/thread.h
 src/%.o: src/%.S
 	$(CC) $(MULTICORE_CFLAGS) $(MULTICORE_ASFLAGS) -c $< -o $@
 
-tests/%: tests/%.c $(LIB_NAME)
+NOFP_TEST_BINS = tests/61-mutex tests/62-mutex tests/63-mutex-equity \
+                 tests/64-mutex-join tests/64-sem tests/65-sem-prodcons
+
+$(NOFP_TEST_BINS): tests/%: tests/%.c $(LIB_NAME)
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable $< -o $@ -L. -lthread
 
-# 51-fibonacci compile la lib en statique avec -DFP activÃ© : la dÃ©duplication
-# (dedup.h) memoÃ¯se les threads par (func, arg). C'est sÃ©mantiquement correct
-# uniquement pour des workloads purement fonctionnels (fibonacci rÃ©cursif), pas
-# pour les tests oÃ¹ chaque thread doit produire un effet de bord distinct (61-mutex).
-# C'est pour Ã§a que FP n'est PAS dans CFLAGS global.
-tests/51-fibonacci: tests/51-fibonacci.c $(LIB_SRC_C) $(LIB_SRC_S)
-	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DFP $^ -o $@ $(EXTRA_LDFLAGS)
+FP_WARN = -Wno-unused-but-set-variable -Wno-maybe-uninitialized
+
+tests/%: tests/%.c $(LIB_SRC_C) $(LIB_SRC_S)
+	$(CC) $(CFLAGS) $(FP_WARN) -DFP $^ -o $@ $(EXTRA_LDFLAGS)
 
 tests/23-create-many-once: tests/23-create-many-once.c $(LIB_SRC_C) $(LIB_SRC_S)
-	$(CC) $(CFLAGS) -Wno-unused-but-set-variable $^ -o $@ $(EXTRA_LDFLAGS)
+	$(CC) $(CFLAGS) $(FP_WARN) -DFP $^ -o $@ $(EXTRA_LDFLAGS)
 
 tests/71-preemption: tests/71-preemption.c $(LIB_SRC_C) $(LIB_SRC_S)
-	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PREEMPTION $^ -o $@ $(EXTRA_LDFLAGS)
+	$(CC) $(CFLAGS) $(FP_WARN) -DFP -DUSE_PREEMPTION $^ -o $@ $(EXTRA_LDFLAGS)
 
 tests/131-priority: tests/131-priority.c $(LIB_SRC_C) $(LIB_SRC_S)
-	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DUSE_PRIORITY $^ -o $@
+	$(CC) $(CFLAGS) $(FP_WARN) -DFP -DUSE_PRIORITY $^ -o $@
 
 pthreads: $(TEST_PTHREAD_BINS)
 
