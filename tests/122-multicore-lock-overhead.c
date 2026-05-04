@@ -18,14 +18,16 @@
 static thread_mutex_t mutex;
 static volatile int counter;
 
-struct thread_arg {
+struct thread_arg
+{
     int ops;
 };
 
 static void *thfunc(void *arg)
 {
     struct thread_arg *ta = (struct thread_arg *)arg;
-    for (int i = 0; i < ta->ops; i++) {
+    for (int i = 0; i < ta->ops; i++)
+    {
         thread_mutex_lock(&mutex);
         counter++;
         thread_mutex_unlock(&mutex);
@@ -35,8 +37,7 @@ static void *thfunc(void *arg)
 
 static long timespec_ns(struct timespec *start, struct timespec *end)
 {
-    return (end->tv_sec - start->tv_sec) * 1000000000L
-         + (end->tv_nsec - start->tv_nsec);
+    return (end->tv_sec - start->tv_sec) * 1000000000L + (end->tv_nsec - start->tv_nsec);
 }
 
 int main(void)
@@ -47,7 +48,8 @@ int main(void)
     printf("%-10s %10s\n", "Threads", "ns/op");
     printf("--------- ----------\n");
 
-    for (int c = 0; c < n_configs; c++) {
+    for (int c = 0; c < n_configs; c++)
+    {
         int nt = thread_counts[c];
         int ops_per_thread = TOTAL_OPS / nt;
 
@@ -56,7 +58,8 @@ int main(void)
 
         thread_t *th = malloc(nt * sizeof(*th));
         struct thread_arg *args = malloc(nt * sizeof(*args));
-        if (!th || !args) {
+        if (!th || !args)
+        {
             perror("malloc");
             return EXIT_FAILURE;
         }
@@ -65,12 +68,14 @@ int main(void)
         int err;
 
         clock_gettime(CLOCK_MONOTONIC, &t1);
-        for (int i = 0; i < nt; i++) {
+        for (int i = 0; i < nt; i++)
+        {
             args[i].ops = ops_per_thread;
             err = thread_create(&th[i], thfunc, &args[i]);
             assert(!err);
         }
-        for (int i = 0; i < nt; i++) {
+        for (int i = 0; i < nt; i++)
+        {
             err = thread_join(th[i], NULL);
             assert(!err);
         }

@@ -8,9 +8,9 @@
  */
 #include "thread.h"
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <sys/time.h>
 
 static void *child_func(void *arg)
@@ -20,7 +20,8 @@ static void *child_func(void *arg)
     return (void *)(uintptr_t)val;
 }
 
-struct worker_arg {
+struct worker_arg
+{
     int worker_id;
     int rounds;
     int batch;
@@ -33,27 +34,32 @@ static void *worker_func(void *arg)
     wa->ok = 1;
 
     thread_t *children = malloc(wa->batch * sizeof(*children));
-    if (!children) {
+    if (!children)
+    {
         wa->ok = 0;
         return NULL;
     }
 
     int err;
-    for (int r = 0; r < wa->rounds; r++) {
-        for (int b = 0; b < wa->batch; b++) {
-            unsigned long seed = (unsigned long)wa->worker_id * 1000000
-                               + (unsigned long)r * 1000 + (unsigned long)b;
+    for (int r = 0; r < wa->rounds; r++)
+    {
+        for (int b = 0; b < wa->batch; b++)
+        {
+            unsigned long seed =
+                (unsigned long)wa->worker_id * 1000000 + (unsigned long)r * 1000 + (unsigned long)b;
             err = thread_create(&children[b], child_func, (void *)(uintptr_t)seed);
             assert(!err);
         }
-        for (int b = 0; b < wa->batch; b++) {
+        for (int b = 0; b < wa->batch; b++)
+        {
             void *retval;
             err = thread_join(children[b], &retval);
             assert(!err);
-            unsigned long seed = (unsigned long)wa->worker_id * 1000000
-                               + (unsigned long)r * 1000 + (unsigned long)b;
+            unsigned long seed =
+                (unsigned long)wa->worker_id * 1000000 + (unsigned long)r * 1000 + (unsigned long)b;
             unsigned long expected = seed * 6364136223846793005UL + 1;
-            if ((uintptr_t)retval != (uintptr_t)expected) {
+            if ((uintptr_t)retval != (uintptr_t)expected)
+            {
                 wa->ok = 0;
             }
         }
@@ -74,14 +80,16 @@ int main(int argc, char *argv[])
         rounds = atoi(argv[2]);
     if (argc >= 4)
         batch = atoi(argv[3]);
-    if (nb_workers <= 0 || rounds <= 0 || batch <= 0) {
+    if (nb_workers <= 0 || rounds <= 0 || batch <= 0)
+    {
         fprintf(stderr, "parametres invalides\n");
         return EXIT_FAILURE;
     }
 
     thread_t *th = malloc(nb_workers * sizeof(*th));
     struct worker_arg *args = malloc(nb_workers * sizeof(*args));
-    if (!th || !args) {
+    if (!th || !args)
+    {
         perror("malloc");
         return EXIT_FAILURE;
     }
@@ -90,7 +98,8 @@ int main(int argc, char *argv[])
     gettimeofday(&tv1, NULL);
 
     int err;
-    for (int i = 0; i < nb_workers; i++) {
+    for (int i = 0; i < nb_workers; i++)
+    {
         args[i].worker_id = i;
         args[i].rounds = rounds;
         args[i].batch = batch;
@@ -100,7 +109,8 @@ int main(int argc, char *argv[])
     }
 
     int all_ok = 1;
-    for (int i = 0; i < nb_workers; i++) {
+    for (int i = 0; i < nb_workers; i++)
+    {
         err = thread_join(th[i], NULL);
         assert(!err);
         if (!args[i].ok)
@@ -109,18 +119,20 @@ int main(int argc, char *argv[])
 
     gettimeofday(&tv2, NULL);
 
-    unsigned long us = (tv2.tv_sec - tv1.tv_sec) * 1000000
-                     + (tv2.tv_usec - tv1.tv_usec);
+    unsigned long us = (tv2.tv_sec - tv1.tv_sec) * 1000000 + (tv2.tv_usec - tv1.tv_usec);
     long total = (long)nb_workers * rounds * batch;
 
     free(th);
     free(args);
 
-    if (all_ok) {
+    if (all_ok)
+    {
         printf("Memory stress OK: %d workers * %d rounds * %d batch = %ld threads en %lu us\n",
                nb_workers, rounds, batch, total, us);
         return EXIT_SUCCESS;
-    } else {
+    }
+    else
+    {
         printf("ERREUR: retval mismatch detecte\n");
         return EXIT_FAILURE;
     }

@@ -32,10 +32,10 @@ typedef struct thread
     STAILQ_ENTRY(thread) link; // Le next du thread
 } thread_m;
 
-
-typedef struct thread_mutex_internal{
-    int locked;  
-    STAILQ_HEAD(, thread) waiting;  // une file de threads bloqués sur ce mutex
+typedef struct thread_mutex_internal
+{
+    int locked;
+    STAILQ_HEAD(, thread) waiting; // une file de threads bloqués sur ce mutex
 } thread_mutex_m;
 
 // Global pointer to the currently running thread

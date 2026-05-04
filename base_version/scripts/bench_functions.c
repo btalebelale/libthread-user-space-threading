@@ -23,15 +23,19 @@ static inline long long now_ns(void)
     return (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
 }
 
-#define BENCH(label, ITERATIONS, SETUP, BODY, TEARDOWN)                       \
-    do {                                                                       \
-        SETUP;                                                                 \
-        long long _start = now_ns();                                           \
-        for (int _i = 0; _i < (ITERATIONS); _i++) { BODY; }                   \
-        long long _end = now_ns();                                             \
-        TEARDOWN;                                                              \
-        double _avg = (double)(_end - _start) / (ITERATIONS);                  \
-        printf("%-30s  %8d iter  %10.1f ns/op\n", label, (ITERATIONS), _avg); \
+#define BENCH(label, ITERATIONS, SETUP, BODY, TEARDOWN)                                            \
+    do                                                                                             \
+    {                                                                                              \
+        SETUP;                                                                                     \
+        long long _start = now_ns();                                                               \
+        for (int _i = 0; _i < (ITERATIONS); _i++)                                                  \
+        {                                                                                          \
+            BODY;                                                                                  \
+        }                                                                                          \
+        long long _end = now_ns();                                                                 \
+        TEARDOWN;                                                                                  \
+        double _avg = (double)(_end - _start) / (ITERATIONS);                                      \
+        printf("%-30s  %8d iter  %10.1f ns/op\n", label, (ITERATIONS), _avg);                      \
     } while (0)
 
 /* ---------- thread functions for benchmarks ---------- */
@@ -61,45 +65,37 @@ static void *exit_func(void *arg)
 
 static void bench_thread_self(void)
 {
-    BENCH("thread_self", 1000000,
-        {},
-        { thread_self(); },
-        {});
+    BENCH("thread_self", 1000000, {}, { thread_self(); }, {});
 }
 
 static void bench_create_join(void)
 {
     int iters = 100000;
-    BENCH("thread_create+join", iters,
-        {},
-        {
-            thread_t th;
-            thread_create(&th, noop_func, NULL);
-            thread_join(th, NULL);
-        },
-        {});
+    BENCH("thread_create+join", iters, {},
+          {
+              thread_t th;
+              thread_create(&th, noop_func, NULL);
+              thread_join(th, NULL);
+          },
+          {});
 }
 
 static void bench_create_exit_join(void)
 {
     int iters = 100000;
-    BENCH("thread_create+exit+join", iters,
-        {},
-        {
-            thread_t th;
-            thread_create(&th, exit_func, NULL);
-            thread_join(th, NULL);
-        },
-        {});
+    BENCH("thread_create+exit+join", iters, {},
+          {
+              thread_t th;
+              thread_create(&th, exit_func, NULL);
+              thread_join(th, NULL);
+          },
+          {});
 }
 
 static void bench_yield_solo(void)
 {
     /* yield quand on est le seul thread : mesure le coût minimal */
-    BENCH("thread_yield (solo)", 1000000,
-        {},
-        { thread_yield(); },
-        {});
+    BENCH("thread_yield (solo)", 1000000, {}, { thread_yield(); }, {});
 }
 
 static void bench_yield_pair(void)
@@ -125,8 +121,8 @@ static void bench_yield_pair(void)
 static void bench_mutex(void)
 {
     thread_mutex_t m;
-    BENCH("mutex lock+unlock (no contention)", 1000000,
-        { thread_mutex_init(&m); },
+    BENCH(
+        "mutex lock+unlock (no contention)", 1000000, { thread_mutex_init(&m); },
         {
             thread_mutex_lock(&m);
             thread_mutex_unlock(&m);
@@ -136,14 +132,13 @@ static void bench_mutex(void)
 
 static void bench_mutex_init_destroy(void)
 {
-    BENCH("mutex init+destroy", 1000000,
-        {},
-        {
-            thread_mutex_t m;
-            thread_mutex_init(&m);
-            thread_mutex_destroy(&m);
-        },
-        {});
+    BENCH("mutex init+destroy", 1000000, {},
+          {
+              thread_mutex_t m;
+              thread_mutex_init(&m);
+              thread_mutex_destroy(&m);
+          },
+          {});
 }
 
 /* ---------- main ---------- */

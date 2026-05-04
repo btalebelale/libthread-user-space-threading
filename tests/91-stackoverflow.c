@@ -5,14 +5,14 @@
 
 /* Récursion infinie → déborde la pile.
  * noinline + noclone empêchent le compilateur de transformer en tail-call */
-__attribute__((noinline, noclone))
-static void *overflow_func(void *dummy)
+__attribute__((noinline, noclone)) static void *overflow_func(void *dummy)
 {
     volatile char buf[4096];
     buf[0] = 1;
     buf[4095] = 2;
     /* Utiliser le buffer pour empêcher son élimination */
-    if (buf[0] + buf[4095] == 0) return dummy;
+    if (buf[0] + buf[4095] == 0)
+        return dummy;
     void *(*volatile self)(void *) = overflow_func;
     void *ret = self(dummy);
     /* Empêcher la tail-call : utiliser ret après l'appel */

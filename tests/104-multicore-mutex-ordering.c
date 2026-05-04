@@ -20,11 +20,13 @@ static volatile int violations = 0;
 
 static void *thfunc(void *dummy __attribute__((unused)))
 {
-    for (int i = 0; i < ITERATIONS; i++) {
+    for (int i = 0; i < ITERATIONS; i++)
+    {
         thread_mutex_lock(&mutex);
 
         int val = __atomic_fetch_add(&inside, 1, __ATOMIC_SEQ_CST);
-        if (val + 1 > 1) {
+        if (val + 1 > 1)
+        {
             __atomic_fetch_add((volatile int *)&violations, 1, __ATOMIC_SEQ_CST);
         }
 
@@ -53,12 +55,14 @@ int main(int argc, char *argv[])
     assert(threads != NULL);
 
     int err;
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; i++)
+    {
         err = thread_create(&threads[i], thfunc, NULL);
         assert(!err);
     }
 
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; i++)
+    {
         err = thread_join(threads[i], NULL);
         assert(!err);
     }
@@ -66,12 +70,12 @@ int main(int argc, char *argv[])
     thread_mutex_destroy(&mutex);
     free(threads);
 
-    if (violations > 0) {
+    if (violations > 0)
+    {
         printf("FAIL: %d mutual exclusion violations detected\n", violations);
         return EXIT_FAILURE;
     }
 
-    printf("mutex ordering OK: %d threads x %d iterations, 0 violations\n",
-           n, ITERATIONS);
+    printf("mutex ordering OK: %d threads x %d iterations, 0 violations\n", n, ITERATIONS);
     return EXIT_SUCCESS;
 }
