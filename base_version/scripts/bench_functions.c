@@ -146,30 +146,6 @@ static void bench_mutex_init_destroy(void)
         {});
 }
 
-static void bench_sem(void)
-{
-    thread_sem_t s;
-    BENCH("sem wait+post (no contention)", 1000000,
-        { thread_sem_init(&s, 1); },
-        {
-            thread_sem_wait(&s);
-            thread_sem_post(&s);
-        },
-        { thread_sem_destroy(&s); });
-}
-
-static void bench_sem_init_destroy(void)
-{
-    BENCH("sem init+destroy", 1000000,
-        {},
-        {
-            thread_sem_t s;
-            thread_sem_init(&s, 1);
-            thread_sem_destroy(&s);
-        },
-        {});
-}
-
 /* ---------- main ---------- */
 
 int main(void)
@@ -185,8 +161,6 @@ int main(void)
     bench_yield_pair();
     bench_mutex_init_destroy();
     bench_mutex();
-    bench_sem_init_destroy();
-    bench_sem();
 
     printf("--------------------------------------------------------------\n");
     return 0;
