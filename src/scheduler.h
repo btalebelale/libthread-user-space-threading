@@ -1,10 +1,10 @@
 #ifndef __SCHEDULER_H__
 #define __SCHEDULER_H__
 
-#include "thread_internal.h"
 #include "thread_common.h"
+#include "thread_internal.h"
 
-#define SCHED_PREV(t)     (THREAD_COLD(t)->sched_prev)
+#define SCHED_PREV(t) (THREAD_COLD(t)->sched_prev)
 #define SCHED_PRIORITY(t) (THREAD_COLD(t)->priority)
 
 static inline __attribute__((always_inline)) void sched_enqueue(thread_hot_t *t)
@@ -40,7 +40,7 @@ static inline __attribute__((always_inline)) void sched_remove(thread_hot_t *t)
 }
 
 static inline __attribute__((always_inline)) void sched_replace(thread_hot_t *old,
-                                                                 thread_hot_t *new_t)
+                                                                thread_hot_t *new_t)
 {
 
     new_t->sched_next = old->sched_next;
@@ -60,7 +60,8 @@ static inline __attribute__((always_inline)) void sched_replace(thread_hot_t *ol
 
 #ifdef USE_PRIORITY
 
-static inline __attribute__((always_inline)) thread_hot_t *sched_pick_highest(void){
+static inline __attribute__((always_inline)) thread_hot_t *sched_pick_highest(void)
+{
     thread_hot_t *best = current->sched_next;
     for (thread_hot_t *t = best->sched_next; t != current; t = t->sched_next)
         if (SCHED_PRIORITY(t) > SCHED_PRIORITY(best))

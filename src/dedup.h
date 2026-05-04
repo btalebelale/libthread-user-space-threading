@@ -4,10 +4,10 @@
 #include "thread_internal.h"
 
 #include <stdint.h>
-#include <string.h>
-#include <sys/mman.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
 
 #ifdef __SSE2__
 #include <emmintrin.h>
@@ -33,46 +33,41 @@ static func_ptr_t *swiss_key_func;
 static void **swiss_key_arg;
 static thread_hot_t **swiss_val;
 
-static inline __attribute__((always_inline))
-uint64_t dedup_hash_full(func_ptr_t func, void *arg)
+static inline __attribute__((always_inline)) uint64_t dedup_hash_full(func_ptr_t func, void *arg)
 {
     uint64_t h = (uint64_t)(uintptr_t)func * DEDUP_MAGIC;
     h ^= (uint64_t)(uintptr_t)arg * 7046029254386353131ULL;
     return h;
 }
 
-static inline __attribute__((always_inline))
-uint32_t swiss_group_index(uint64_t h)
+static inline __attribute__((always_inline)) uint32_t swiss_group_index(uint64_t h)
 {
     return (uint32_t)(h >> 50) & SWISS_GROUP_MASK;
 }
 
-static inline __attribute__((always_inline))
-int8_t swiss_tag(uint64_t h)
+static inline __attribute__((always_inline)) int8_t swiss_tag(uint64_t h)
 {
     return (int8_t)((h >> 43) & 0x7F);
 }
 
 #ifdef __SSE2__
 
-static inline __attribute__((always_inline))
-uint32_t swiss_match(const int8_t *ctrl, int8_t tag)
+static inline __attribute__((always_inline)) uint32_t swiss_match(const int8_t *ctrl, int8_t tag)
 {
     __m128i group = _mm_load_si128((const __m128i *)ctrl);
     __m128i cmp = _mm_cmpeq_epi8(group, _mm_set1_epi8(tag));
     return (uint32_t)_mm_movemask_epi8(cmp);
 }
 
-static inline __attribute__((always_inline))
-uint32_t swiss_match_empty(const int8_t *ctrl)
+static inline __attribute__((always_inline)) uint32_t swiss_match_empty(const int8_t *ctrl)
 {
     __m128i group = _mm_load_si128((const __m128i *)ctrl);
     __m128i cmp = _mm_cmpeq_epi8(group, _mm_set1_epi8(CTRL_EMPTY));
     return (uint32_t)_mm_movemask_epi8(cmp);
 }
 
-static inline __attribute__((always_inline))
-uint32_t swiss_match_empty_or_deleted(const int8_t *ctrl)
+static inline __attribute__((always_inline)) uint32_t
+swiss_match_empty_or_deleted(const int8_t *ctrl)
 {
     __m128i group = _mm_load_si128((const __m128i *)ctrl);
     return (uint32_t)_mm_movemask_epi8(group);
@@ -80,52 +75,54 @@ uint32_t swiss_match_empty_or_deleted(const int8_t *ctrl)
 
 #else
 
-static inline __attribute__((always_inline))
-uint32_t swiss_match(const int8_t *ctrl, int8_t tag)
+static inline __attribute__((always_inline)) uint32_t swiss_match(const int8_t *ctrl, int8_t tag)
 {
     uint32_t mask = 0;
     for (int i = 0; i < 16; i++)
-        if (ctrl[i] == tag) mask |= (1u << i);
+        if (ctrl[i] == tag)
+            mask |= (1u << i);
     return mask;
 }
 
-static inline __attribute__((always_inline))
-uint32_t swiss_match_empty(const int8_t *ctrl)
+static inline __attribute__((always_inline)) uint32_t swiss_match_empty(const int8_t *ctrl)
 {
     uint32_t mask = 0;
     for (int i = 0; i < 16; i++)
-        if (ctrl[i] == CTRL_EMPTY) mask |= (1u << i);
+        if (ctrl[i] == CTRL_EMPTY)
+            mask |= (1u << i);
     return mask;
 }
 
-static inline __attribute__((always_inline))
-uint32_t swiss_match_empty_or_deleted(const int8_t *ctrl)
+static inline __attribute__((always_inline)) uint32_t
+swiss_match_empty_or_deleted(const int8_t *ctrl)
 {
     uint32_t mask = 0;
     for (int i = 0; i < 16; i++)
-        if (ctrl[i] < 0) mask |= (1u << i);
+        if (ctrl[i] < 0)
+            mask |= (1u << i);
     return mask;
 }
 
 #endif
 
-typedef struct { uint32_t group; uint32_t stride; } swiss_probe_t;
-
-static inline __attribute__((always_inline))
-swiss_probe_t swiss_probe_start(uint64_t h)
+typedef struct
 {
-    return (swiss_probe_t){ swiss_group_index(h), 0 };
+    uint32_t group;
+    uint32_t stride;
+} swiss_probe_t;
+
+static inline __attribute__((always_inline)) swiss_probe_t swiss_probe_start(uint64_t h)
+{
+    return (swiss_probe_t){swiss_group_index(h), 0};
 }
 
-static inline __attribute__((always_inline))
-void swiss_probe_next(swiss_probe_t *p)
+static inline __attribute__((always_inline)) void swiss_probe_next(swiss_probe_t *p)
 {
     p->stride++;
     p->group = (p->group + p->stride) & SWISS_GROUP_MASK;
 }
 
-static inline __attribute__((always_inline))
-thread_hot_t *dedup_lookup(func_ptr_t func, void *arg)
+static inline __attribute__((always_inline)) thread_hot_t *dedup_lookup(func_ptr_t func, void *arg)
 {
     uint64_t h = dedup_hash_full(func, arg);
     int8_t tag = swiss_tag(h);
@@ -153,8 +150,8 @@ thread_hot_t *dedup_lookup(func_ptr_t func, void *arg)
     }
 }
 
-static inline __attribute__((always_inline))
-void dedup_insert(func_ptr_t func, void *arg, thread_hot_t *t)
+static inline __attribute__((always_inline)) void dedup_insert(func_ptr_t func, void *arg,
+                                                               thread_hot_t *t)
 {
     uint64_t h = dedup_hash_full(func, arg);
     int8_t tag = swiss_tag(h);
@@ -181,8 +178,7 @@ void dedup_insert(func_ptr_t func, void *arg, thread_hot_t *t)
     }
 }
 
-static inline
-void dedup_remove(func_ptr_t func, void *arg)
+static inline void dedup_remove(func_ptr_t func, void *arg)
 {
     uint64_t h = dedup_hash_full(func, arg);
     int8_t tag = swiss_tag(h);
@@ -215,44 +211,41 @@ void dedup_remove(func_ptr_t func, void *arg)
     }
 }
 
-__attribute__((cold))
-static void dedup_mem_init(void)
+__attribute__((cold)) static void dedup_mem_init(void)
 {
 
     size_t ctrl_sz = (size_t)DEDUP_CAP;
     size_t func_sz = (size_t)DEDUP_CAP * sizeof(func_ptr_t);
-    size_t arg_sz  = (size_t)DEDUP_CAP * sizeof(void *);
-    size_t val_sz  = (size_t)DEDUP_CAP * sizeof(thread_hot_t *);
+    size_t arg_sz = (size_t)DEDUP_CAP * sizeof(void *);
+    size_t val_sz = (size_t)DEDUP_CAP * sizeof(thread_hot_t *);
 
     ctrl_sz = (ctrl_sz + 63) & ~(size_t)63;
     func_sz = (func_sz + 63) & ~(size_t)63;
-    arg_sz  = (arg_sz + 63) & ~(size_t)63;
+    arg_sz = (arg_sz + 63) & ~(size_t)63;
     size_t total = ctrl_sz + func_sz + arg_sz + val_sz;
 
-    char *mem = mmap(NULL, total,
-                     PROT_READ | PROT_WRITE,
+    char *mem = mmap(NULL, total, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
     if (__builtin_expect(mem == MAP_FAILED, 0))
     {
         perror("mmap dedup swiss");
         exit(1);
     }
-    swiss_ctrl     = (int8_t *)mem;
+    swiss_ctrl = (int8_t *)mem;
     swiss_key_func = (func_ptr_t *)(mem + ctrl_sz);
-    swiss_key_arg  = (void **)(mem + ctrl_sz + func_sz);
-    swiss_val      = (thread_hot_t **)(mem + ctrl_sz + func_sz + arg_sz);
+    swiss_key_arg = (void **)(mem + ctrl_sz + func_sz);
+    swiss_val = (thread_hot_t **)(mem + ctrl_sz + func_sz + arg_sz);
     memset(swiss_ctrl, CTRL_EMPTY, DEDUP_CAP);
 }
 
-__attribute__((cold))
-static void dedup_mem_destroy(void)
+__attribute__((cold)) static void dedup_mem_destroy(void)
 {
     if (swiss_ctrl && swiss_ctrl != MAP_FAILED)
     {
         size_t ctrl_sz = ((size_t)DEDUP_CAP + 63) & ~(size_t)63;
         size_t func_sz = ((size_t)DEDUP_CAP * sizeof(func_ptr_t) + 63) & ~(size_t)63;
-        size_t arg_sz  = ((size_t)DEDUP_CAP * sizeof(void *) + 63) & ~(size_t)63;
-        size_t val_sz  = (size_t)DEDUP_CAP * sizeof(thread_hot_t *);
+        size_t arg_sz = ((size_t)DEDUP_CAP * sizeof(void *) + 63) & ~(size_t)63;
+        size_t val_sz = (size_t)DEDUP_CAP * sizeof(thread_hot_t *);
         munmap(swiss_ctrl, ctrl_sz + func_sz + arg_sz + val_sz);
     }
     swiss_ctrl = NULL;

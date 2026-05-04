@@ -2,10 +2,10 @@
 #define __THREAD_H__
 #include <stdint.h>
 
-typedef uint8_t thread_sigset_t;   /* bits 1..7 = signaux 1..7 */
+typedef uint8_t thread_sigset_t; /* bits 1..7 = signaux 1..7 */
 
-#define THREAD_PRIORITY_MIN     0
-#define THREAD_PRIORITY_MAX     7
+#define THREAD_PRIORITY_MIN 0
+#define THREAD_PRIORITY_MAX 7
 #define THREAD_PRIORITY_DEFAULT 3
 
 #ifndef USE_PTHREAD
@@ -57,14 +57,15 @@ int thread_mutex_lock(thread_mutex_t *mutex);
 int thread_mutex_unlock(thread_mutex_t *mutex);
 
 /* Interface pour les sémaphores */
-typedef struct thread_sem {
+typedef struct thread_sem
+{
     int __opaque[32];
 } thread_sem_t;
 
 int thread_sem_init(thread_sem_t *sem, int value);
 int thread_sem_destroy(thread_sem_t *sem);
-int thread_sem_wait(thread_sem_t *sem);   /* P() — décrémente, bloque si < 0 */
-int thread_sem_post(thread_sem_t *sem);   /* V() — incrémente, réveille si waiter */
+int thread_sem_wait(thread_sem_t *sem); /* P() — décrémente, bloque si < 0 */
+int thread_sem_post(thread_sem_t *sem); /* V() — incrémente, réveille si waiter */
 
 /* Interface pour la gestion des signaux */
 int thread_kill(thread_t target, int sig);
@@ -98,16 +99,16 @@ int thread_getpriority(thread_t thread, int *priority);
 #define thread_mutex_lock pthread_mutex_lock
 #define thread_mutex_unlock pthread_mutex_unlock
 
-#define thread_sem_t      sem_t
+#define thread_sem_t sem_t
 #define thread_sem_init(s, v) sem_init(s, 0, v)
-#define thread_sem_destroy    sem_destroy
-#define thread_sem_wait       sem_wait
-#define thread_sem_post       sem_post
+#define thread_sem_destroy sem_destroy
+#define thread_sem_wait sem_wait
+#define thread_sem_post sem_post
 
-#define thread_kill(target, sig)      pthread_kill(target, sig)
-#define thread_sigwait(mask, sig)     (-1)
+#define thread_kill(target, sig) pthread_kill(target, sig)
+#define thread_sigwait(mask, sig) (-1)
 
-#define thread_setpriority(th, prio) ((void)0)                                                                                              
+#define thread_setpriority(th, prio) ((void)0)
 #define thread_getpriority(th, pprio) (*(pprio) = 0, 0)
 
 #endif /* USE_PTHREAD */

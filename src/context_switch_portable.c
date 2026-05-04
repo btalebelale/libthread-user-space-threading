@@ -2,9 +2,9 @@
 
 #if !defined(__x86_64__) && !defined(MULTICORE)
 
-#include <ucontext.h>
-#include "thread_internal.h"
 #include "thread_common.h"
+#include "thread_internal.h"
+#include <ucontext.h>
 
 extern thread_hot_t *last_created;
 extern int inline_executing;
@@ -18,23 +18,22 @@ __attribute__((visibility("hidden"))) void portable_thread_start(void)
     thread_entry(cc->func, cc->func_arg);
 }
 
-__attribute__((visibility("hidden")))
-void context_switch(void **old_rsp, void *new_rsp)
+__attribute__((visibility("hidden"))) void context_switch(void **old_rsp, void *new_rsp)
 {
     swapcontext((ucontext_t *)*old_rsp, (ucontext_t *)new_rsp);
 }
 
-__attribute__((visibility("hidden"), __noreturn__))
-void context_restore(void *new_rsp)
+__attribute__((visibility("hidden"), __noreturn__)) void context_restore(void *new_rsp)
 {
     setcontext((ucontext_t *)new_rsp);
     __builtin_unreachable();
 }
 
-__attribute__((visibility("hidden"))) void thread_trampoline(void) {}
+__attribute__((visibility("hidden"))) void thread_trampoline(void)
+{
+}
 
-__attribute__((visibility("hidden")))
-int thread_yield_asm(void)
+__attribute__((visibility("hidden"))) int thread_yield_asm(void)
 {
     if (__builtin_expect(inline_executing > 0, 0))
         return 0;
@@ -55,8 +54,10 @@ int thread_yield_asm(void)
 }
 
 #if !defined(USE_PREEMPTION) && !defined(USE_PRIORITY)
-__attribute__((visibility("default")))
-int thread_yield(void) { return thread_yield_asm(); }
+__attribute__((visibility("default"))) int thread_yield(void)
+{
+    return thread_yield_asm();
+}
 #endif
 
 #endif

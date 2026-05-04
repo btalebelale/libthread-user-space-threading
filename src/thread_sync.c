@@ -1,9 +1,9 @@
 
 
-#include "thread.h"
-#include "thread_internal.h"
-#include "thread_common.h"
 #include "preempt.h"
+#include "thread.h"
+#include "thread_common.h"
+#include "thread_internal.h"
 
 #ifdef MULTICORE
 #include "scheduler_mn.h"
@@ -12,12 +12,12 @@
 #include "scheduler.h"
 #endif
 
+#include <errno.h>
+#include <signal.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
-#include <errno.h>
-#include <stddef.h>
 
 __attribute__((visibility("hidden"))) extern void flush_last_created_pub(void);
 
@@ -34,21 +34,24 @@ static void unlock_spinlock_cb(void *arg)
 #define SYNC_WAKE(t) sched_enqueue(t)
 #endif
 
-static inline void wq_append(thread_hot_t **head, thread_hot_t **tail,
-                             thread_hot_t *t)
+static inline void wq_append(thread_hot_t **head, thread_hot_t **tail, thread_hot_t *t)
 {
     t->sched_next = NULL;
-    if (*tail == NULL) *head = t;
-    else (*tail)->sched_next = t;
+    if (*tail == NULL)
+        *head = t;
+    else
+        (*tail)->sched_next = t;
     *tail = t;
 }
 
 static inline thread_hot_t *wq_pop(thread_hot_t **head, thread_hot_t **tail)
 {
     thread_hot_t *t = *head;
-    if (t) {
+    if (t)
+    {
         *head = t->sched_next;
-        if (*head == NULL) *tail = NULL;
+        if (*head == NULL)
+            *tail = NULL;
     }
     return t;
 }
@@ -245,7 +248,8 @@ __attribute__((visibility("default"), hot)) int thread_sem_post(thread_sem_t *se
     pthread_spin_unlock(&s->lock);
 #endif
 
-    if (w) SYNC_WAKE(w);
+    if (w)
+        SYNC_WAKE(w);
 
     preempt_restore(&old);
     return 0;
@@ -253,12 +257,13 @@ __attribute__((visibility("default"), hot)) int thread_sem_post(thread_sem_t *se
 
 __attribute__((visibility("default"))) int thread_kill(thread_t target, int sig)
 {
-    if (sig < 1 || sig > 7) return -1;
+    if (sig < 1 || sig > 7)
+        return -1;
 
     sigset_t old;
     preempt_block(&old);
 
-    thread_hot_t  *t  = (thread_hot_t *)target;
+    thread_hot_t *t = (thread_hot_t *)target;
     thread_cold_t *target_cold = THREAD_COLD(t);
     thread_sigset_t bit = (thread_sigset_t)(1u << sig);
     thread_hot_t *to_wake = NULL;
@@ -271,15 +276,16 @@ __attribute__((visibility("default"))) int thread_kill(thread_t target, int sig)
     {
         target_cold->pending_sigs &= ~bit;
         target_cold->received_sig = sig;
-        target_cold->sig_waiting  = 0;
-        target_cold->wait_mask    = 0;
+        target_cold->sig_waiting = 0;
+        target_cold->wait_mask = 0;
         to_wake = t;
     }
 #ifdef MULTICORE
     pthread_spin_unlock(&target_cold->cold_lock);
 #endif
 
-    if (to_wake) SYNC_WAKE(to_wake);
+    if (to_wake)
+        SYNC_WAKE(to_wake);
 
     preempt_restore(&old);
     return 0;
@@ -303,7 +309,8 @@ __attribute__((visibility("default"))) int thread_sigwait(thread_sigset_t mask, 
 #ifdef MULTICORE
         pthread_spin_unlock(&current_cold->cold_lock);
 #endif
-        if (sig) *sig = s;
+        if (sig)
+            *sig = s;
         preempt_restore(&old);
         return 0;
     }
@@ -316,7 +323,7 @@ __attribute__((visibility("default"))) int thread_sigwait(thread_sigset_t mask, 
     }
 #endif
 
-    current_cold->wait_mask   = mask;
+    current_cold->wait_mask = mask;
     current_cold->sig_waiting = 1;
 
 #ifdef MULTICORE
@@ -332,7 +339,8 @@ __attribute__((visibility("default"))) int thread_sigwait(thread_sigset_t mask, 
     context_switch(me, next);
 #endif
 
-if (sig) *sig = current_cold->received_sig;
+    if (sig)
+        *sig = current_cold->received_sig;
     preempt_restore(&old);
     return 0;
 }
