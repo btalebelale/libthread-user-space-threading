@@ -21,7 +21,8 @@ for t in 01-main 02-switch 11-join 12-join-main 13-join-switch \
          105-multicore-join-values 106-multicore-cascade-mutex \
          107-multicore-yield-fairness 111-multicore-stress-create-join \
          112-multicore-stress-mutex 113-multicore-memory-stress \
-         121-multicore-speedup 122-multicore-lock-overhead 123-multicore-scalability; do
+         121-multicore-speedup 122-multicore-lock-overhead 123-multicore-scalability \
+         72-multicore-preemption; do
     case "$t" in
         21-create-many|22-create-many-recursive|23-create-many-once) run_test ./tests/$t 200 ;;
         31-switch-many|32-switch-many-join) run_test ./tests/$t 50 50 ;;

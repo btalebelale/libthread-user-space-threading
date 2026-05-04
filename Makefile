@@ -84,7 +84,8 @@ MN_TEST_BINS = tests/101-multicore-counter \
                tests/113-multicore-memory-stress \
                tests/121-multicore-speedup \
                tests/122-multicore-lock-overhead \
-               tests/123-multicore-scalability
+               tests/123-multicore-scalability \
+               tests/72-multicore-preemption
 
 ifeq ($(MULTICORE),1)
 TEST_BINS = $(BASE_TEST_BINS) $(MN_TEST_BINS)
@@ -124,6 +125,11 @@ tests/23-create-many-once: tests/23-create-many-once.c $(LIB_SRC_C) $(LIB_SRC_S)
 
 tests/71-preemption: tests/71-preemption.c $(LIB_SRC_C) $(LIB_SRC_S)
 	$(CC) $(CFLAGS) $(FP_WARN) -DFP -DUSE_PREEMPTION $^ -o $@ $(EXTRA_LDFLAGS)
+
+# 72-multicore-preemption : statique pour forcer USE_PREEMPTION + LIBTHREAD_MN_PREEMPT
+# même quand `make MULTICORE=1` ne définit pas LIBTHREAD_MN_PREEMPT par défaut.
+tests/72-multicore-preemption: tests/72-multicore-preemption.c $(LIB_SRC_C) $(LIB_SRC_S)
+	$(CC) $(CFLAGS) $(FP_WARN) -DUSE_PREEMPTION -DLIBTHREAD_MN_PREEMPT $^ -o $@ $(EXTRA_LDFLAGS)
 
 tests/131-priority: tests/131-priority.c $(LIB_SRC_C) $(LIB_SRC_S)
 	$(CC) $(CFLAGS) $(FP_WARN) -DFP -DUSE_PRIORITY $^ -o $@
@@ -185,4 +191,18 @@ check-mn-preempt:
 	$(MAKE) MULTICORE=1 EXTRA_CFLAGS="-DLIBTHREAD_MN_PREEMPT" all
 	LD_LIBRARY_PATH=. ./scripts/run_tests_mn_preempt.sh
 
-.PHONY: all clean valgrind check pthreads graphs install pgo multicore multicore-preempt check-mn check-mn-preempt
+# Lance uniquement les tests dédiés à la préemption.
+# Les deux sont compilés en statique avec leurs propres -D, donc indépendants
+# du mode global ; mais le Makefile clean les .o à la bascule MN ↔ mono, donc
+# on compile en deux phases séparées :
+#   - 71-preemption       : mode mono (USE_PREEMPTION)
+#   - 72-multicore-preemption : mode MN  (LIBTHREAD_MN_PREEMPT)
+check-preempt:
+	$(MAKE) tests/71-preemption
+	$(MAKE) MULTICORE=1 tests/72-multicore-preemption
+	@echo "===== TEST 71 (mono + préemption) ====="
+	./tests/71-preemption 8
+	@echo "===== TEST 72 (MN + préemption) ====="
+	./tests/72-multicore-preemption
+
+.PHONY: all clean valgrind check pthreads graphs install pgo multicore multicore-preempt check-mn check-mn-preempt check-preempt
