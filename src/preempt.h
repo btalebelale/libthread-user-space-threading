@@ -39,9 +39,9 @@ static inline void preempt_unblock_self(void)
 
 #else
 
-#define preempt_block(old)        ((void)(old))
-#define preempt_restore(old)      ((void)(old))
-#define preempt_unblock_self()    ((void)0)
+#define preempt_block(old) ((void)(old))
+#define preempt_restore(old) ((void)(old))
+#define preempt_unblock_self() ((void)0)
 
 #endif
 

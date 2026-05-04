@@ -4,34 +4,35 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
-#include <stdint.h>
-#include <stdlib.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 __thread worker_t *self_worker = NULL;
 
 #define MAX_RUNQS 64
 
-#define CL_CAP   4096
-#define CL_MASK  (CL_CAP - 1)
+#define CL_CAP 4096
+#define CL_MASK (CL_CAP - 1)
 
-typedef struct worker_runq {
+typedef struct worker_runq
+{
 
     _Alignas(64) _Atomic size_t top;
 
     _Alignas(64) _Atomic size_t bottom;
 
-_Alignas(64) _Atomic(thread_hot_t *) items[CL_CAP];
+    _Alignas(64) _Atomic(thread_hot_t *) items[CL_CAP];
 
-_Alignas(64) pthread_mutex_t idle_lock;
-    pthread_cond_t  idle_cv;
+    _Alignas(64) pthread_mutex_t idle_lock;
+    pthread_cond_t idle_cv;
 
-_Alignas(64) pthread_mutex_t inj_lock;
-    thread_hot_t   *inj_head;
-    thread_hot_t   *inj_tail;
-    _Atomic int     inj_size;
+    _Alignas(64) pthread_mutex_t inj_lock;
+    thread_hot_t *inj_head;
+    thread_hot_t *inj_tail;
+    _Atomic int inj_size;
 } __attribute__((aligned(64))) worker_runq_t;
 
 static worker_runq_t runqs[MAX_RUNQS] __attribute__((aligned(64)));
@@ -43,12 +44,14 @@ static atomic_int push_rr;
 
 void runq_init(int nworkers)
 {
-    if (nworkers > MAX_RUNQS) nworkers = MAX_RUNQS;
+    if (nworkers > MAX_RUNQS)
+        nworkers = MAX_RUNQS;
     n_runqs = nworkers;
     atomic_store_explicit(&idle_bitmap, 0, memory_order_relaxed);
     atomic_store_explicit(&push_rr, 0, memory_order_relaxed);
-    for (int i = 0; i < nworkers; i++) {
-        atomic_store_explicit(&runqs[i].top,    0, memory_order_relaxed);
+    for (int i = 0; i < nworkers; i++)
+    {
+        atomic_store_explicit(&runqs[i].top, 0, memory_order_relaxed);
         atomic_store_explicit(&runqs[i].bottom, 0, memory_order_relaxed);
         pthread_mutex_init(&runqs[i].idle_lock, NULL);
         pthread_cond_init(&runqs[i].idle_cv, NULL);
@@ -63,7 +66,8 @@ void runq_init(int nworkers)
 void runq_shutdown_broadcast(void)
 {
     runq_shutdown_flag = 1;
-    for (int i = 0; i < n_runqs; i++) {
+    for (int i = 0; i < n_runqs; i++)
+    {
         pthread_mutex_lock(&runqs[i].idle_lock);
         pthread_cond_broadcast(&runqs[i].idle_cv);
         pthread_mutex_unlock(&runqs[i].idle_lock);
@@ -74,7 +78,8 @@ static inline size_t cl_push_bottom(worker_runq_t *q, thread_hot_t *t)
 {
     size_t b = atomic_load_explicit(&q->bottom, memory_order_relaxed);
     size_t top = atomic_load_explicit(&q->top, memory_order_acquire);
-    if (b - top >= CL_CAP) {
+    if (b - top >= CL_CAP)
+    {
         fprintf(stderr,
                 "libthread: per-worker deque full (cap=%d) — recompile with larger CL_CAP\n",
                 CL_CAP);
@@ -92,21 +97,21 @@ static inline thread_hot_t *cl_pop_bottom(worker_runq_t *q)
 
     atomic_store_explicit(&q->bottom, b, memory_order_seq_cst);
     size_t t = atomic_load_explicit(&q->top, memory_order_seq_cst);
-    if ((ptrdiff_t)(b - t) < 0) {
+    if ((ptrdiff_t)(b - t) < 0)
+    {
 
         atomic_store_explicit(&q->bottom, t, memory_order_relaxed);
         return NULL;
     }
-    thread_hot_t *item = atomic_load_explicit(&q->items[b & CL_MASK],
-                                              memory_order_acquire);
-    if (b != t) {
+    thread_hot_t *item = atomic_load_explicit(&q->items[b & CL_MASK], memory_order_acquire);
+    if (b != t)
+    {
 
         return item;
     }
 
-    int won = atomic_compare_exchange_strong_explicit(
-        &q->top, &t, t + 1,
-        memory_order_seq_cst, memory_order_relaxed);
+    int won = atomic_compare_exchange_strong_explicit(&q->top, &t, t + 1, memory_order_seq_cst,
+                                                      memory_order_relaxed);
 
     atomic_store_explicit(&q->bottom, b + 1, memory_order_relaxed);
     return won ? item : NULL;
@@ -117,12 +122,12 @@ static inline thread_hot_t *cl_steal(worker_runq_t *q)
 
     size_t t = atomic_load_explicit(&q->top, memory_order_seq_cst);
     size_t b = atomic_load_explicit(&q->bottom, memory_order_seq_cst);
-    if ((ptrdiff_t)(b - t) <= 0) return NULL;
-    thread_hot_t *item = atomic_load_explicit(&q->items[t & CL_MASK],
-                                              memory_order_acquire);
-    if (!atomic_compare_exchange_strong_explicit(
-            &q->top, &t, t + 1,
-            memory_order_seq_cst, memory_order_relaxed)) {
+    if ((ptrdiff_t)(b - t) <= 0)
+        return NULL;
+    thread_hot_t *item = atomic_load_explicit(&q->items[t & CL_MASK], memory_order_acquire);
+    if (!atomic_compare_exchange_strong_explicit(&q->top, &t, t + 1, memory_order_seq_cst,
+                                                 memory_order_relaxed))
+    {
         return NULL;
     }
     return item;
@@ -132,9 +137,11 @@ static void wake_one_idle(int self_id)
 {
     uint64_t idle = atomic_load_explicit(&idle_bitmap, memory_order_acquire);
     idle &= ~(1ULL << self_id);
-    if (!idle) return;
+    if (!idle)
+        return;
     int v = __builtin_ctzll(idle);
-    if (v >= n_runqs) return;
+    if (v >= n_runqs)
+        return;
     pthread_mutex_lock(&runqs[v].idle_lock);
     pthread_cond_signal(&runqs[v].idle_cv);
     pthread_mutex_unlock(&runqs[v].idle_lock);
@@ -155,8 +162,10 @@ static void inj_push(int target, thread_hot_t *t)
     pthread_mutex_lock(&q->inj_lock);
 
     t->sched_next = NULL;
-    if (q->inj_tail == NULL) q->inj_head = t;
-    else q->inj_tail->sched_next = t;
+    if (q->inj_tail == NULL)
+        q->inj_head = t;
+    else
+        q->inj_tail->sched_next = t;
     q->inj_tail = t;
     atomic_fetch_add_explicit(&q->inj_size, 1, memory_order_release);
     pthread_mutex_unlock(&q->inj_lock);
@@ -169,9 +178,11 @@ static thread_hot_t *try_drain_injector(worker_runq_t *q)
         return NULL;
     pthread_mutex_lock(&q->inj_lock);
     thread_hot_t *t = q->inj_head;
-    if (t) {
+    if (t)
+    {
         q->inj_head = t->sched_next;
-        if (q->inj_head == NULL) q->inj_tail = NULL;
+        if (q->inj_head == NULL)
+            q->inj_tail = NULL;
         atomic_fetch_sub_explicit(&q->inj_size, 1, memory_order_relaxed);
         t->sched_next = NULL;
     }
@@ -190,12 +201,15 @@ void runq_push(thread_hot_t *t)
 static thread_hot_t *try_steal(int self_id)
 {
     int n = n_runqs;
-    if (n <= 1) return NULL;
+    if (n <= 1)
+        return NULL;
 
-    for (int i = 1; i < n; i++) {
+    for (int i = 1; i < n; i++)
+    {
         int v = (self_id + i) % n;
         thread_hot_t *t = cl_steal(&runqs[v]);
-        if (t) return t;
+        if (t)
+            return t;
     }
     return NULL;
 }
@@ -204,29 +218,33 @@ thread_hot_t *runq_pop_block(int self_id)
 {
     worker_runq_t *q = &runqs[self_id];
 
-    for (;;) {
+    for (;;)
+    {
         thread_hot_t *t = cl_pop_bottom(q);
-        if (t) return t;
+        if (t)
+            return t;
 
         t = try_drain_injector(q);
-        if (t) return t;
+        if (t)
+            return t;
 
-        if (runq_shutdown_flag) return NULL;
+        if (runq_shutdown_flag)
+            return NULL;
 
         t = try_steal(self_id);
-        if (t) return t;
+        if (t)
+            return t;
 
-        atomic_fetch_or_explicit(&idle_bitmap, 1ULL << self_id,
-                                 memory_order_acq_rel);
+        atomic_fetch_or_explicit(&idle_bitmap, 1ULL << self_id, memory_order_acq_rel);
         pthread_mutex_lock(&q->idle_lock);
         size_t b = atomic_load_explicit(&q->bottom, memory_order_acquire);
         size_t top = atomic_load_explicit(&q->top, memory_order_acquire);
         int inj = atomic_load_explicit(&q->inj_size, memory_order_acquire);
-        if (b == top && inj == 0 && !runq_shutdown_flag) {
+        if (b == top && inj == 0 && !runq_shutdown_flag)
+        {
             pthread_cond_wait(&q->idle_cv, &q->idle_lock);
         }
-        atomic_fetch_and_explicit(&idle_bitmap, ~(1ULL << self_id),
-                                  memory_order_acq_rel);
+        atomic_fetch_and_explicit(&idle_bitmap, ~(1ULL << self_id), memory_order_acq_rel);
         pthread_mutex_unlock(&q->idle_lock);
     }
 }
@@ -235,12 +253,13 @@ static void schedule_push_balance_cb(void *arg)
 {
     int n = n_runqs;
     int self = self_worker->id;
-    int target = (int)(atomic_fetch_add_explicit(&push_rr, 1,
-                                                 memory_order_relaxed)
-                       % (unsigned)n);
-    if (target == self) {
+    int target = (int)(atomic_fetch_add_explicit(&push_rr, 1, memory_order_relaxed) % (unsigned)n);
+    if (target == self)
+    {
         runq_push((thread_hot_t *)arg);
-    } else {
+    }
+    else
+    {
         inj_push(target, (thread_hot_t *)arg);
     }
 }
@@ -249,7 +268,8 @@ void schedule(void)
 {
     worker_t *worker = self_worker;
     thread_hot_t *me = worker->current;
-    if (__builtin_expect(me == NULL, 0)) {
+    if (__builtin_expect(me == NULL, 0))
+    {
         /* Garde-fou : ne devrait jamais arriver puisque thread_yield
          * checke current!=NULL avant. Mais si ça arrive (corruption,
          * timing pathologique), un context_switch_raw(NULL,...) crashe. */
@@ -277,7 +297,8 @@ void schedule_park(void (*cb)(void *), void *arg)
 {
     worker_t *worker = self_worker;
     thread_hot_t *me = worker->current;
-    if (__builtin_expect(me == NULL, 0)) {
+    if (__builtin_expect(me == NULL, 0))
+    {
         fprintf(stderr, "libthread: schedule_park() with current==NULL on worker %d, skipping\n",
                 worker->id);
         return;
@@ -309,8 +330,10 @@ __attribute__((__noreturn__)) void worker_loop(void)
 {
     worker_t *worker = self_worker;
     worker->on_sched_stack = 1;
-    for (;;) {
-        if (worker->after_switch) {
+    for (;;)
+    {
+        if (worker->after_switch)
+        {
             void (*cb)(void *) = worker->after_switch;
             void *arg = worker->after_arg;
             worker->after_switch = NULL;
@@ -318,8 +341,10 @@ __attribute__((__noreturn__)) void worker_loop(void)
             cb(arg);
         }
         thread_hot_t *t = runq_pop_block(worker->id);
-        if (!t) {
-            for (;;) pause();
+        if (!t)
+        {
+            for (;;)
+                pause();
         }
         worker->current = t;
         if (__builtin_expect(t->rsp == NULL, 0))

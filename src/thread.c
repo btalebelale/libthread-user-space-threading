@@ -1,16 +1,16 @@
 #include "thread.h"
+#include "preempt.h"
 #include "scheduler.h"
 #include "thread_common.h"
-#include "preempt.h"
 
+#include <errno.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/mman.h>
-#include <signal.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/time.h>
-#include <errno.h>
 #ifndef __x86_64__
 #include <ucontext.h>
 __attribute__((visibility("hidden"))) extern void portable_thread_start(void);
@@ -21,7 +21,7 @@ static int stack_arena_next;
 
 static void *stack_free_head;
 
-__attribute__((visibility("hidden"))) thread_hot_t  *hot_slab;
+__attribute__((visibility("hidden"))) thread_hot_t *hot_slab;
 __attribute__((visibility("hidden"))) thread_cold_t *cold_slab;
 static int thread_slab_next;
 
@@ -73,7 +73,7 @@ __attribute__((noinline, cold, visibility("hidden"))) void flush_last_created_sl
 {
     thread_cold_t *lc_cold = THREAD_COLD(last_created);
 
-lc_cold->func = last_created_func;
+    lc_cold->func = last_created_func;
     lc_cold->func_arg = last_created_arg;
 #ifdef FP
     dedup_insert(last_created_func, last_created_arg, last_created);
@@ -82,16 +82,14 @@ lc_cold->func = last_created_func;
     last_created = NULL;
 }
 
-__attribute__((noinline, cold, visibility("hidden")))
-void lazy_stack_alloc(thread_hot_t *t)
+__attribute__((noinline, cold, visibility("hidden"))) void lazy_stack_alloc(thread_hot_t *t)
 {
     thread_cold_t *target_cold = THREAD_COLD(t);
     void *stack = stack_alloc();
     if (__builtin_expect(!stack, 0))
     {
 
-        fprintf(stderr,
-                "libthread: stack arena exhausted (max %d threads concurrents)\n",
+        fprintf(stderr, "libthread: stack arena exhausted (max %d threads concurrents)\n",
                 STACK_CAP);
         abort();
     }
@@ -99,8 +97,8 @@ void lazy_stack_alloc(thread_hot_t *t)
     t->rsp = stack_init(stack, target_cold->func, target_cold->func_arg, t);
 #ifndef NVALGRIND
 
-    target_cold->valgrind_stackid = VALGRIND_STACK_REGISTER(
-        (char *)stack + STACK_GUARD, (char *)stack + STACK_SIZE);
+    target_cold->valgrind_stackid =
+        VALGRIND_STACK_REGISTER((char *)stack + STACK_GUARD, (char *)stack + STACK_SIZE);
 #endif
 }
 
@@ -232,9 +230,9 @@ static void *stack_init(void *stack_base, void *(*func)(void *), void *arg, thre
 
     void **s = (void **)sp;
 
-*(--s) = (void *)thread_trampoline;
+    *(--s) = (void *)thread_trampoline;
 
-t->saved_rbx = NULL;
+    t->saved_rbx = NULL;
     t->saved_rbp = NULL;
     t->saved_r12 = (void *)func;
     t->saved_r13 = arg;
@@ -246,13 +244,15 @@ t->saved_rbx = NULL;
     return s;
 #else
 
-    (void)func; (void)arg; (void)stack_color_counter;
+    (void)func;
+    (void)arg;
+    (void)stack_color_counter;
     ucontext_t *uc = (ucontext_t *)((char *)stack_base + STACK_GUARD);
-    char  *ss_sp   = (char *)uc + sizeof(ucontext_t);
+    char *ss_sp = (char *)uc + sizeof(ucontext_t);
     size_t ss_size = STACK_SIZE - STACK_GUARD - sizeof(ucontext_t);
     getcontext(uc);
-    uc->uc_link          = NULL;
-    uc->uc_stack.ss_sp   = ss_sp;
+    uc->uc_link = NULL;
+    uc->uc_stack.ss_sp = ss_sp;
     uc->uc_stack.ss_size = ss_size;
     makecontext(uc, portable_thread_start, 0);
     return uc;
@@ -343,8 +343,8 @@ __attribute__((constructor, cold)) static void init_system(void)
 #else
     static ucontext_t exit_uc;
     getcontext(&exit_uc);
-    exit_uc.uc_link          = NULL;
-    exit_uc.uc_stack.ss_sp   = exit_stack;
+    exit_uc.uc_link = NULL;
+    exit_uc.uc_stack.ss_sp = exit_stack;
     exit_uc.uc_stack.ss_size = sizeof(exit_stack);
     makecontext(&exit_uc, clean_exit, 0);
     exit_thread.rsp = &exit_uc;
@@ -476,32 +476,37 @@ __attribute__((visibility("default"))) int thread_yield(void)
 
 #endif
 
-thread_cold_t *uf_find(thread_cold_t *t){
-    while(t->parent != t){
+thread_cold_t *uf_find(thread_cold_t *t)
+{
+    while (t->parent != t)
+    {
         t = t->parent = t->parent->parent;
     }
     return t;
 }
 
-int uf_union(thread_cold_t *a, thread_cold_t *b){
+int uf_union(thread_cold_t *a, thread_cold_t *b)
+{
     a = uf_find(a);
     b = uf_find(b);
 
-    if(a == b) return -1;
+    if (a == b)
+        return -1;
 
-    while(a->rank < b->rank){
+    while (a->rank < b->rank)
+    {
         thread_cold_t *tmp = a;
         a = b;
         b = tmp;
     }
 
     b->parent = a;
-    if(a->rank == b->rank) a->rank++;
+    if (a->rank == b->rank)
+        a->rank++;
     return 0;
 }
 
-__attribute__((noinline))
-static void inline_run(thread_hot_t *t, void *(*fn)(void *), void *ar)
+__attribute__((noinline)) static void inline_run(thread_hot_t *t, void *(*fn)(void *), void *ar)
 {
     thread_cold_t *target_cold = THREAD_COLD(t);
     thread_hot_t *prev = current;
@@ -524,16 +529,15 @@ static void inline_run(thread_hot_t *t, void *(*fn)(void *), void *ar)
     current = prev;
 }
 
-static inline __attribute__((always_inline))
-void join_fast_inline(thread_hot_t *t)
+static inline __attribute__((always_inline)) void join_fast_inline(thread_hot_t *t)
 {
     last_created = NULL;
     if (__builtin_expect(t->rsp == NULL, 1))
         inline_run(t, last_created_func, last_created_arg);
 }
 
-static inline __attribute__((always_inline))
-void join_generalized_inline(thread_hot_t *t, thread_cold_t *target_cold)
+static inline __attribute__((always_inline)) void
+join_generalized_inline(thread_hot_t *t, thread_cold_t *target_cold)
 {
     flush_last_created();
     sched_remove(t);
@@ -551,8 +555,7 @@ void join_generalized_inline(thread_hot_t *t, thread_cold_t *target_cold)
     inline_run(t, target_cold->func, target_cold->func_arg);
 }
 
-static inline __attribute__((always_inline))
-int join_park(thread_cold_t *target_cold)
+static inline __attribute__((always_inline)) int join_park(thread_cold_t *target_cold)
 {
     target_cold->waiting = current;
     flush_last_created();
@@ -573,8 +576,8 @@ int join_park(thread_cold_t *target_cold)
     return 0;
 }
 
-static inline __attribute__((always_inline))
-void join_cleanup(thread_hot_t *t, thread_cold_t *target_cold, void **retval)
+static inline __attribute__((always_inline)) void
+join_cleanup(thread_hot_t *t, thread_cold_t *target_cold, void **retval)
 {
     if (retval)
         *retval = target_cold->retval;
@@ -677,7 +680,7 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
 
     sched_remove(current);
 
-void *exit_stack = current_cold->stack_base;
+    void *exit_stack = current_cold->stack_base;
     current_cold->stack_base = NULL;
 
     current = next;
