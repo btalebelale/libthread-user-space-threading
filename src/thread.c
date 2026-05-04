@@ -27,10 +27,6 @@ static int thread_slab_next;
 
 static thread_hot_t *thread_free_head;
 
-
-
-
-// La préemption (handler/init locaux ; block/restore dans preempt.h)
 #ifdef USE_PREEMPTION
 #define PREEMPT_INTERVAL_US 20
 static void preempt_handler(int sig)
@@ -58,7 +54,6 @@ __attribute__((cold)) static void preempt_init(void)
 #define preempt_init() ((void)0)
 #endif
 
-
 __attribute__((visibility("hidden"))) thread_hot_t *current __attribute__((aligned(64))) = NULL;
 __attribute__((visibility("hidden"))) thread_hot_t *last_created;
 static void *(*last_created_func)(void *);
@@ -72,17 +67,14 @@ __attribute__((visibility("hidden"))) int inline_executing;
 
 static void *stack_alloc(void);
 static void stack_release(void *s);
-static void *stack_init(void *stack_base, void *(*func)(void *), void *arg);
+static void *stack_init(void *stack_base, void *(*func)(void *), void *arg, thread_hot_t *t);
 
 __attribute__((noinline, cold, visibility("hidden"))) void flush_last_created_slow(void)
 {
-    thread_cold_t *lc = THREAD_COLD(last_created);
+    thread_cold_t *lc_cold = THREAD_COLD(last_created);
 
-    // Deferred stack allocation: don't allocate stack here.
-    // Stack will be allocated lazily in yield if thread is actually scheduled,
-    // or skipped entirely if the thread is inline-joined.
-    lc->func = last_created_func;
-    lc->func_arg = last_created_arg;
+lc_cold->func = last_created_func;
+    lc_cold->func_arg = last_created_arg;
 #ifdef FP
     dedup_insert(last_created_func, last_created_arg, last_created);
 #endif
@@ -90,27 +82,24 @@ __attribute__((noinline, cold, visibility("hidden"))) void flush_last_created_sl
     last_created = NULL;
 }
 
-// Lazy stack allocation: called from yield when next thread has no stack
 __attribute__((noinline, cold, visibility("hidden")))
 void lazy_stack_alloc(thread_hot_t *t)
 {
-    thread_cold_t *tc = THREAD_COLD(t);
+    thread_cold_t *target_cold = THREAD_COLD(t);
     void *stack = stack_alloc();
     if (__builtin_expect(!stack, 0))
     {
-        /* L'arena de stacks est épuisée. Le fallback "exécuter inline" est
-         * cassé (le yield qui nous a appelé va ensuite context_switch dans
-         * t->rsp == NULL → crash). Erreur de capacité non récupérable. */
+
         fprintf(stderr,
                 "libthread: stack arena exhausted (max %d threads concurrents)\n",
                 STACK_CAP);
         abort();
     }
-    tc->stack_base = stack;
-    t->rsp = stack_init(stack, tc->func, tc->func_arg);
+    target_cold->stack_base = stack;
+    t->rsp = stack_init(stack, target_cold->func, target_cold->func_arg, t);
 #ifndef NVALGRIND
-    /* Stack utilisable = [stack + GUARD, stack + STACK_SIZE). */
-    tc->valgrind_stackid = VALGRIND_STACK_REGISTER(
+
+    target_cold->valgrind_stackid = VALGRIND_STACK_REGISTER(
         (char *)stack + STACK_GUARD, (char *)stack + STACK_SIZE);
 #endif
 }
@@ -123,8 +112,9 @@ static inline __attribute__((always_inline)) void flush_last_created(void)
 
 __attribute__((cold)) static void mem_init(void)
 {
+
     stack_arena = mmap(NULL, (size_t)STACK_CAP * STACK_SIZE, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
     if (__builtin_expect(stack_arena == MAP_FAILED, 0))
     {
         perror("mmap stack arena");
@@ -132,8 +122,9 @@ __attribute__((cold)) static void mem_init(void)
     }
 
     madvise(stack_arena, (size_t)STACK_CAP * STACK_SIZE, MADV_HUGEPAGE);
+
     hot_slab = mmap(NULL, (size_t)THREAD_CAP * sizeof(thread_hot_t), PROT_READ | PROT_WRITE,
-                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
     if (__builtin_expect(hot_slab == MAP_FAILED, 0))
     {
         perror("mmap hot slab");
@@ -141,7 +132,7 @@ __attribute__((cold)) static void mem_init(void)
     }
 
     cold_slab = mmap(NULL, (size_t)THREAD_CAP * sizeof(thread_cold_t), PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
     if (__builtin_expect(cold_slab == MAP_FAILED, 0))
     {
         perror("mmap cold slab");
@@ -186,10 +177,7 @@ static void *stack_alloc(void)
         return NULL;
 
     void *s = (char *)stack_arena + ((size_t)stack_arena_next++ * STACK_SIZE);
-    /* Page de garde sur la première utilisation du slot ; persiste à travers
-     * les recyclages via free list. */
-    if (__builtin_expect(mprotect(s, STACK_GUARD, PROT_NONE) != 0, 0))
-        perror("mprotect stack guard");
+
     return s;
 }
 
@@ -199,7 +187,6 @@ static void stack_release(void *s)
     stack_free_head = s;
 }
 
-// Free-list intrusive via le champ rsp (inutilisé quand le thread est libéré)
 static thread_hot_t *thread_alloc(void)
 {
     if (__builtin_expect(thread_free_head != NULL, 1))
@@ -221,7 +208,7 @@ static void thread_release(thread_hot_t *t)
 
 static char exit_stack[4096] __attribute__((aligned(16)));
 
-static void *exit_rsp;
+static thread_hot_t exit_thread;
 
 __attribute__((visibility("hidden"))) void thread_entry(void *(*func)(void *), void *arg)
 {
@@ -234,7 +221,7 @@ __attribute__((visibility("hidden"))) void thread_entry(void *(*func)(void *), v
 
 static int stack_color_counter;
 
-static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
+static void *stack_init(void *stack_base, void *(*func)(void *), void *arg, thread_hot_t *t)
 {
 #ifdef __x86_64__
     uintptr_t sp = (uintptr_t)stack_base + STACK_SIZE;
@@ -245,23 +232,20 @@ static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
 
     void **s = (void **)sp;
 
-    // Adresse de retour pour context_switch → ret → thread_trampoline
-    *(--s) = (void *)thread_trampoline;
+*(--s) = (void *)thread_trampoline;
 
-    *(--s) = 0;            // rbx
-    *(--s) = 0;            // rbp
-    *(--s) = (void *)func; // r12 = func
-    *(--s) = arg;          // r13 = arg
-    *(--s) = 0;            // r14
-    *(--s) = 0;            // r15
+t->saved_rbx = NULL;
+    t->saved_rbp = NULL;
+    t->saved_r12 = (void *)func;
+    t->saved_r13 = arg;
+    t->saved_r14 = NULL;
+    t->saved_r15 = NULL;
 
-    VALGRIND_MAKE_MEM_DEFINED(s, 7 * sizeof(void *));
+    VALGRIND_MAKE_MEM_DEFINED(s, sizeof(void *));
 
     return s;
 #else
-    /* Fallback ucontext : on place le ucontext_t juste après la guard page,
-     * et la pile utilisable suit. func/arg sont déjà dans le cold (écrits
-     * par flush_last_created_slow) — la trampoline les y relit. */
+
     (void)func; (void)arg; (void)stack_color_counter;
     ucontext_t *uc = (ucontext_t *)((char *)stack_base + STACK_GUARD);
     char  *ss_sp   = (char *)uc + sizeof(ucontext_t);
@@ -277,11 +261,11 @@ static void *stack_init(void *stack_base, void *(*func)(void *), void *arg)
 
 __attribute__((cold)) static void clean_exit(void)
 {
-    thread_cold_t *cc = THREAD_COLD(current);
-    if (cc->stack_base)
+    thread_cold_t *current_cold = THREAD_COLD(current);
+    if (current_cold->stack_base)
     {
 #ifndef NVALGRIND
-        VALGRIND_STACK_DEREGISTER(cc->valgrind_stackid);
+        VALGRIND_STACK_DEREGISTER(current_cold->valgrind_stackid);
 #endif
     }
     current = NULL;
@@ -306,11 +290,11 @@ __attribute__((cold)) static void thread_system_destroy(void)
         while (!is_sched_empty())
         {
             thread_hot_t *t = sched_dequeue_fifo();
-            thread_cold_t *tc = THREAD_COLD(t);
-            if (tc->stack_base)
+            thread_cold_t *target_cold = THREAD_COLD(t);
+            if (target_cold->stack_base)
             {
 #ifndef NVALGRIND
-                VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
+                VALGRIND_STACK_DEREGISTER(target_cold->valgrind_stackid);
 #endif
             }
         }
@@ -336,33 +320,26 @@ __attribute__((constructor, cold)) static void init_system(void)
 #ifdef __x86_64__
     current->rsp = NULL;
 #else
-    /* Sur fallback, t->rsp = ucontext_t*. Le main n'a pas de pile allouée
-     * par nous, mais swapcontext a besoin d'un ucontext_t où sauvegarder
-     * son état lors du premier switch out — d'où ce slot statique. */
+
     static ucontext_t main_uc;
     current->rsp = &main_uc;
 #endif
     current->sched_next = current;
-    current->sched_prev = current;
-    current->priority = THREAD_PRIORITY_DEFAULT;
 
-    thread_cold_t *cc = THREAD_COLD(current);
-    thread_cold_reset(cc);
-    cc->started = 1;  /* main tourne déjà */
+    thread_cold_t *current_cold = THREAD_COLD(current);
+    thread_cold_reset(current_cold);
+    current_cold->sched_prev = current;
+    current_cold->priority = THREAD_PRIORITY_DEFAULT;
+    current_cold->started = 1;
 
 #ifdef __x86_64__
+
     uintptr_t sp = (uintptr_t)(exit_stack + sizeof(exit_stack));
     sp &= ~(uintptr_t)0xF;
     void **s = (void **)sp;
     *(--s) = (void *)clean_exit;
-    *(--s) = 0;
-    *(--s) = 0;
-    *(--s) = 0;
-    *(--s) = 0;
-    *(--s) = 0;
-    *(--s) = 0;
-    exit_rsp = s;
-    VALGRIND_MAKE_MEM_DEFINED(s, 7 * sizeof(void *));
+    exit_thread.rsp = s;
+    VALGRIND_MAKE_MEM_DEFINED(s, sizeof(void *));
 #else
     static ucontext_t exit_uc;
     getcontext(&exit_uc);
@@ -370,7 +347,7 @@ __attribute__((constructor, cold)) static void init_system(void)
     exit_uc.uc_stack.ss_sp   = exit_stack;
     exit_uc.uc_stack.ss_size = sizeof(exit_stack);
     makecontext(&exit_uc, clean_exit, 0);
-    exit_rsp = &exit_uc;
+    exit_thread.rsp = &exit_uc;
 #endif
 
     preempt_init();
@@ -412,10 +389,10 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     if (__builtin_expect(!t, 0))
         return -1;
 
-    thread_cold_t *tc = THREAD_COLD(t);
-    thread_cold_reset(tc);
+    thread_cold_t *target_cold = THREAD_COLD(t);
+    thread_cold_reset(target_cold);
     t->rsp = NULL;
-    t->priority = THREAD_PRIORITY_DEFAULT;
+    target_cold->priority = THREAD_PRIORITY_DEFAULT;
 
     flush_last_created();
     last_created = t;
@@ -428,13 +405,13 @@ __attribute__((visibility("default"))) int thread_create(thread_t *newthread, vo
     return 0;
 }
 
-__attribute__((visibility("default"))) int thread_setpriority(thread_t thread, int priority)                                          
-{               
+__attribute__((visibility("default"))) int thread_setpriority(thread_t thread, int priority)
+{
     if (priority < THREAD_PRIORITY_MIN || priority > THREAD_PRIORITY_MAX)
-        return -1;                                                                                                                    
+        return -1;
     thread_hot_t *t = (thread_hot_t *)thread;
-    t->priority = priority;                                                                                                           
-    return 0;   
+    THREAD_COLD(t)->priority = priority;
+    return 0;
 }
 
 __attribute__((visibility("default"))) int thread_getpriority(thread_t thread, int *priority)
@@ -442,12 +419,10 @@ __attribute__((visibility("default"))) int thread_getpriority(thread_t thread, i
     if (!priority)
         return -1;
     thread_hot_t *t = (thread_hot_t *)thread;
-    *priority = t->priority;
+    *priority = THREAD_COLD(t)->priority;
     return 0;
 }
 
-
-// thread_yield_asm est implémenté dans context_switch.S
 #if defined(USE_PRIORITY)
 
 __attribute__((visibility("hidden"))) extern int thread_yield_asm(void);
@@ -468,7 +443,7 @@ __attribute__((visibility("default"))) int thread_yield(void)
     }
     thread_hot_t *best = sched_pick_highest();
 
-    if (best->priority < current->priority)
+    if (THREAD_COLD(best)->priority < THREAD_COLD(current)->priority)
     {
         preempt_restore(&old);
         return 0;
@@ -479,7 +454,7 @@ __attribute__((visibility("default"))) int thread_yield(void)
     if (__builtin_expect(best->rsp == NULL, 0))
         lazy_stack_alloc(best);
 
-    context_switch(&prev->rsp, best->rsp);
+    context_switch(prev, best);
     preempt_restore(&old);
     return 0;
 }
@@ -501,7 +476,6 @@ __attribute__((visibility("default"))) int thread_yield(void)
 
 #endif
 
-
 thread_cold_t *uf_find(thread_cold_t *t){
     while(t->parent != t){
         t = t->parent = t->parent->parent;
@@ -513,7 +487,7 @@ int uf_union(thread_cold_t *a, thread_cold_t *b){
     a = uf_find(a);
     b = uf_find(b);
 
-    if(a == b) return -1; //deadlock
+    if(a == b) return -1;
 
     while(a->rank < b->rank){
         thread_cold_t *tmp = a;
@@ -526,34 +500,106 @@ int uf_union(thread_cold_t *a, thread_cold_t *b){
     return 0;
 }
 
-/* Exécute inline le thread t dans la frame courante, via setjmp/longjmp :
- * - on prend la place de prev=current dans la sched-list (sched_replace)
- * - fn(ar) tourne ; un thread_exit() depuis fn() saute via _longjmp jusqu'au
- *   _setjmp posé ici, ce qui évite de se retrouver coincé dans la stack du
- *   thread inline (pas de pile dédiée allouée).
- * noinline : exigé pour que les locals ne soient pas clobberés par longjmp. */
 __attribute__((noinline))
 static void inline_run(thread_hot_t *t, void *(*fn)(void *), void *ar)
 {
-    thread_cold_t *tc = THREAD_COLD(t);
+    thread_cold_t *target_cold = THREAD_COLD(t);
     thread_hot_t *prev = current;
     current = t;
     sched_replace(prev, t);
 
-    tc->started = 1;
+    target_cold->started = 1;
     inline_executing++;
     jmp_buf jb;
     if (__builtin_expect(_setjmp(jb) == 0, 1))
     {
-        tc->inline_jmpbuf = &jb;
-        tc->retval = fn(ar);
+        target_cold->inline_jmpbuf = &jb;
+        target_cold->retval = fn(ar);
     }
-    tc->inline_jmpbuf = NULL;
-    tc->state = FINISHED;
+    target_cold->inline_jmpbuf = NULL;
+    target_cold->state = FINISHED;
     inline_executing--;
 
     sched_replace(t, prev);
     current = prev;
+}
+
+static inline __attribute__((always_inline))
+void join_fast_inline(thread_hot_t *t)
+{
+    last_created = NULL;
+    if (__builtin_expect(t->rsp == NULL, 1))
+        inline_run(t, last_created_func, last_created_arg);
+}
+
+static inline __attribute__((always_inline))
+void join_generalized_inline(thread_hot_t *t, thread_cold_t *target_cold)
+{
+    flush_last_created();
+    sched_remove(t);
+
+    if (target_cold->stack_base)
+    {
+#ifndef NVALGRIND
+        VALGRIND_STACK_DEREGISTER(target_cold->valgrind_stackid);
+#endif
+        stack_release(target_cold->stack_base);
+        target_cold->stack_base = NULL;
+    }
+    t->rsp = NULL;
+
+    inline_run(t, target_cold->func, target_cold->func_arg);
+}
+
+static inline __attribute__((always_inline))
+int join_park(thread_cold_t *target_cold)
+{
+    target_cold->waiting = current;
+    flush_last_created();
+
+    if (__builtin_expect(is_sched_empty(), 0))
+        return -1;
+
+    thread_hot_t *next = sched_pick_next();
+    sched_remove(current);
+
+    thread_hot_t *prev = current;
+    current = next;
+
+    if (__builtin_expect(next->rsp == NULL, 0))
+        lazy_stack_alloc(next);
+
+    context_switch(prev, next);
+    return 0;
+}
+
+static inline __attribute__((always_inline))
+void join_cleanup(thread_hot_t *t, thread_cold_t *target_cold, void **retval)
+{
+    if (retval)
+        *retval = target_cold->retval;
+
+    target_cold->refcount--;
+    if (__builtin_expect(target_cold->refcount == 0, 1))
+    {
+        if (target_cold->func != NULL)
+        {
+#ifdef FP
+            dedup_remove(target_cold->func, target_cold->func_arg);
+#endif
+            target_cold->func = NULL;
+        }
+
+        if (target_cold->stack_base)
+        {
+#ifndef NVALGRIND
+            VALGRIND_STACK_DEREGISTER(target_cold->valgrind_stackid);
+#endif
+            stack_release(target_cold->stack_base);
+        }
+
+        thread_release(t);
+    }
 }
 
 __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, void **retval)
@@ -562,101 +608,29 @@ __attribute__((visibility("default"), hot)) int thread_join(thread_t thread, voi
     preempt_block(&old);
 
     thread_hot_t *t = (thread_hot_t *)thread;
-    thread_cold_t *tc = THREAD_COLD(t);
+    thread_cold_t *target_cold = THREAD_COLD(t);
 
-    if (__builtin_expect(tc->state != FINISHED, 1))
+    if (__builtin_expect(target_cold->state != FINISHED, 1))
     {
-        if(uf_union(THREAD_COLD(current), tc) == -1) {
+        if (uf_union(THREAD_COLD(current), target_cold) == -1)
+        {
             preempt_restore(&old);
             return EDEADLK;
         }
 
         if (__builtin_expect(last_created == t, 1))
+            join_fast_inline(t);
+        else if (__builtin_expect(!target_cold->started && target_cold->func != NULL, 0))
+            join_generalized_inline(t, target_cold);
+        else if (join_park(target_cold) == -1)
         {
-            /* Fast inline-join : t encore en TLS, jamais sched_enqueue, pas
-             * de stack allouée. On l'exécute dans notre frame. */
-            last_created = NULL;
-            if (__builtin_expect(t->rsp == NULL, 1))
-                inline_run(t, last_created_func, last_created_arg);
-        }
-        else if (__builtin_expect(!tc->started && tc->func != NULL, 0))
-        {
-            /* Generalized inline : t a été flushé (donc dans la sched-list)
-             * mais n'a pas encore été élu par le scheduler.
-             * Invariant : `tc->func != NULL` n'est posé que par
-             * flush_last_created_slow(), qui appelle aussi sched_enqueue(t).
-             * Seul le thread lui-même peut se sched_remove (via
-             * mutex/sem/sigwait/exit), ce qui requiert started==1. Donc
-             * (!tc->started && tc->func != NULL) implique t encore dans
-             * la liste circulaire → sched_remove(t) est safe.
-             * (Cas user-bug "double-join" exclu, non spécifié par l'API.) */
-            flush_last_created();
-            sched_remove(t);
-
-            /* La stack a peut-être été pré-allouée par lazy_stack_alloc :
-             * on la rend au pool puisqu'on va exécuter inline. */
-            if (tc->stack_base)
-            {
-#ifndef NVALGRIND
-                VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
-#endif
-                stack_release(tc->stack_base);
-                tc->stack_base = NULL;
-            }
-            t->rsp = NULL;
-
-            inline_run(t, tc->func, tc->func_arg);
-        }
-        else
-        {
-            tc->waiting = current;
-            flush_last_created();
-
-            if (__builtin_expect(is_sched_empty(), 0)){
-                preempt_restore(&old);
-                return -1;
-            }
-            thread_hot_t *next = sched_pick_next();
-
-            sched_remove(current);
-
-            thread_hot_t *prev = current;
-            current = next;
-
-            if (__builtin_expect(next->rsp == NULL, 0))
-                lazy_stack_alloc(next);
-
-            context_switch(&prev->rsp, next->rsp);
+            preempt_restore(&old);
+            return -1;
         }
     }
 
-    if (retval)
-        *retval = tc->retval;
-
-    // Refcount-guarded cleanup
-    tc->refcount--;
-    if (__builtin_expect(tc->refcount == 0, 1))
-    {
-        if (tc->func != NULL)
-        {
-#ifdef FP
-            dedup_remove(tc->func, tc->func_arg);
-#endif
-            tc->func = NULL;
-        }
-
-        if (tc->stack_base)
-        {
-#ifndef NVALGRIND
-            VALGRIND_STACK_DEREGISTER(tc->valgrind_stackid);
-#endif
-            stack_release(tc->stack_base);
-        }
-
-        thread_release(t);
-    }
+    join_cleanup(t, target_cold, retval);
     preempt_restore(&old);
-
     return 0;
 }
 
@@ -665,57 +639,61 @@ __attribute__((visibility("default"), hot)) void thread_exit(void *retval)
     sigset_t old;
     preempt_block(&old);
 
-    thread_cold_t *cc = THREAD_COLD(current);
-    cc->retval = retval;
+    thread_cold_t *current_cold = THREAD_COLD(current);
+    current_cold->retval = retval;
 
-    if (__builtin_expect(cc->inline_jmpbuf != NULL, 0))
+    if (__builtin_expect(current_cold->inline_jmpbuf != NULL, 0))
     {
-        _longjmp(*cc->inline_jmpbuf, 1);
+        _longjmp(*current_cold->inline_jmpbuf, 1);
         __builtin_unreachable();
     }
 
-    cc->state = FINISHED;
+    current_cold->state = FINISHED;
 
-    if (__builtin_expect(cc->waiting != NULL, 1))
+    if (__builtin_expect(current_cold->waiting != NULL, 1))
     {
-        thread_hot_t *w = cc->waiting;
+        thread_hot_t *w = current_cold->waiting;
         sched_replace(current, w);
         current = w;
         if (__builtin_expect(w->rsp == NULL, 0))
             lazy_stack_alloc(w);
-        context_restore(w->rsp);
+        context_restore(w);
     }
 
-    if (__builtin_expect(cc->func != NULL, 1))
+    if (__builtin_expect(current_cold->func != NULL, 1))
     {
 #ifdef FP
-        dedup_remove(cc->func, cc->func_arg);
+        dedup_remove(current_cold->func, current_cold->func_arg);
 #endif
-        cc->func = NULL;
+        current_cold->func = NULL;
     }
 
     flush_last_created();
 
     if (__builtin_expect(is_sched_empty(), 0))
-        context_restore(exit_rsp);
+        context_restore(&exit_thread);
 
     thread_hot_t *next = sched_pick_next();
 
     sched_remove(current);
+
+void *exit_stack = current_cold->stack_base;
+    current_cold->stack_base = NULL;
+
     current = next;
 
     if (__builtin_expect(next->rsp == NULL, 0))
         lazy_stack_alloc(next);
 
-    context_restore(next->rsp);
+    if (__builtin_expect(exit_stack != NULL, 1))
+    {
+        *STACK_FREELIST_PTR(exit_stack) = stack_free_head;
+        stack_free_head = exit_stack;
+    }
+
+    context_restore(next);
 }
 
-/* Mutex, sémaphores, signaux thread : implémentations dans thread_sync.c
- * (partagé avec la variante MN). */
-
-/* Wrapper hidden vers le flush_last_created statique inline ci-dessus.
- * Permet à thread_sync.c (compilé séparément) d'invoquer le flush sans
- * dupliquer la logique. */
 __attribute__((visibility("hidden"))) void flush_last_created_pub(void)
 {
     flush_last_created();

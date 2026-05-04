@@ -33,7 +33,6 @@ static func_ptr_t *swiss_key_func;
 static void **swiss_key_arg;
 static thread_hot_t **swiss_val;
 
-
 static inline __attribute__((always_inline))
 uint64_t dedup_hash_full(func_ptr_t func, void *arg)
 {
@@ -41,7 +40,6 @@ uint64_t dedup_hash_full(func_ptr_t func, void *arg)
     h ^= (uint64_t)(uintptr_t)arg * 7046029254386353131ULL;
     return h;
 }
-
 
 static inline __attribute__((always_inline))
 uint32_t swiss_group_index(uint64_t h)
@@ -54,8 +52,6 @@ int8_t swiss_tag(uint64_t h)
 {
     return (int8_t)((h >> 43) & 0x7F);
 }
-
-
 
 #ifdef __SSE2__
 
@@ -127,7 +123,6 @@ void swiss_probe_next(swiss_probe_t *p)
     p->stride++;
     p->group = (p->group + p->stride) & SWISS_GROUP_MASK;
 }
-
 
 static inline __attribute__((always_inline))
 thread_hot_t *dedup_lookup(func_ptr_t func, void *arg)
@@ -223,12 +218,12 @@ void dedup_remove(func_ptr_t func, void *arg)
 __attribute__((cold))
 static void dedup_mem_init(void)
 {
-    // Single contiguous allocation for better cache locality
+
     size_t ctrl_sz = (size_t)DEDUP_CAP;
     size_t func_sz = (size_t)DEDUP_CAP * sizeof(func_ptr_t);
     size_t arg_sz  = (size_t)DEDUP_CAP * sizeof(void *);
     size_t val_sz  = (size_t)DEDUP_CAP * sizeof(thread_hot_t *);
-    // Align each sub-array to 64 bytes (cache line)
+
     ctrl_sz = (ctrl_sz + 63) & ~(size_t)63;
     func_sz = (func_sz + 63) & ~(size_t)63;
     arg_sz  = (arg_sz + 63) & ~(size_t)63;

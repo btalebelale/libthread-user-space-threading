@@ -1,30 +1,15 @@
-/* context_switch_portable.c — fallback ucontext pour archis non-x86_64.
- *
- * Linux + GCC restent acquis ; seule l'absence d'asm x86_64 nous force ce
- * détour par <ucontext.h>. Aucune ambition de perf : objectif strict =
- * "ça compile et ça tourne" sur ARM, RISC-V, etc.
- *
- * Convention sur ces archis : t->rsp pointe vers un ucontext_t (au lieu
- * d'une vraie valeur RSP). Les sites d'usage (context_switch / restore /
- * thread_yield_asm) traitent le pointeur de manière opaque, donc le reste
- * du code n'a rien à savoir.
- *
- * Limitation assumée : MULTICORE non supporté ici (le mode MN tape sur
- * `self_worker->current` et tout un échafaudage pthread x86-centré). */
+
 
 #if !defined(__x86_64__) && !defined(MULTICORE)
 
 #include <ucontext.h>
 #include "thread_internal.h"
-#include "thread_common.h"  /* THREAD_COLD */
+#include "thread_common.h"
 
 extern thread_hot_t *last_created;
 extern int inline_executing;
 extern void flush_last_created_slow(void);
 
-/* Trampoline appelé par makecontext : à ce moment `current` désigne déjà
- * le nouveau thread (le swap a basculé sur sa pile), donc on lit func/arg
- * depuis son cold. */
 extern void thread_entry(void *(*func)(void *), void *arg);
 
 __attribute__((visibility("hidden"))) void portable_thread_start(void)
@@ -46,12 +31,8 @@ void context_restore(void *new_rsp)
     __builtin_unreachable();
 }
 
-/* Jamais référencé sur ce path (stack_init utilise makecontext au lieu de
- * pousser une adresse de retour), mais le symbole reste exporté pour ne
- * pas casser un éventuel `extern` ailleurs. */
 __attribute__((visibility("hidden"))) void thread_trampoline(void) {}
 
-/* Équivalent C de l'asm thread_yield_asm — même logique exacte. */
 __attribute__((visibility("hidden")))
 int thread_yield_asm(void)
 {
@@ -73,11 +54,9 @@ int thread_yield_asm(void)
     return 0;
 }
 
-/* Sans USE_PREEMPTION/USE_PRIORITY l'asm aliasait thread_yield sur
- * thread_yield_asm. On reproduit l'alias ici. */
 #if !defined(USE_PREEMPTION) && !defined(USE_PRIORITY)
 __attribute__((visibility("default")))
 int thread_yield(void) { return thread_yield_asm(); }
 #endif
 
-#endif /* !__x86_64__ && !MULTICORE */
+#endif

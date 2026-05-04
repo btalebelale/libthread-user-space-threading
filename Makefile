@@ -8,10 +8,10 @@ MULTICORE ?=
 ifeq ($(MULTICORE),1)
   LIB_SRC_C       = src/thread_mn.c src/scheduler_mn.c src/thread_sync.c
   EXTRA_LDFLAGS   = -lpthread
-  # USE_PREEMPTION dans CFLAGS permet à l'asm de NE PAS poser l'alias
-  # thread_yield -> thread_yield_asm (notre C définit thread_yield).
-  # Mais MULTICORE désactive la préemption SIGALRM en C (la sched_stack
-  # n'aime pas être préemptée).
+  # USE_PREEMPTION dans CFLAGS permet Ã  l'asm de NE PAS poser l'alias
+  # thread_yield -> thread_yield_asm (notre C dÃ©finit thread_yield).
+  # Mais MULTICORE dÃ©sactive la prÃ©emption SIGALRM en C (la sched_stack
+  # n'aime pas Ãªtre prÃ©emptÃ©e).
   MULTICORE_CFLAGS = -DMULTICORE -DUSE_PREEMPTION
   MULTICORE_ASFLAGS =
 else
@@ -23,7 +23,7 @@ endif
 
 CFLAGS  = -Wall -Wextra -Werror -g -Ofast -flto -fPIC -fvisibility=hidden -march=native -mtune=native -fno-plt -DNDEBUG -I./src $(VALGRIND_FLAG) $(STACK_FLAG) $(MULTICORE_CFLAGS) $(EXTRA_CFLAGS)
 
-# Sélection arch : asm x86_64 sinon fallback ucontext (Linux/POSIX).
+# SÃ©lection arch : asm x86_64 sinon fallback ucontext (Linux/POSIX).
 UNAME_M := $(shell uname -m)
 ifeq ($(UNAME_M),x86_64)
   LIB_SRC_S = src/context_switch.S
@@ -35,9 +35,9 @@ endif
 LIB_OBJ   = $(LIB_SRC_C:.c=.o) $(LIB_OBJ_ARCH)
 LIB_NAME = libthread.so
 
-# Bascule mono <-> MULTICORE : on évalue le variant à la phase de parsing
-# (avant calcul du DAG) pour pouvoir purger les .o stale et écrire le stamp
-# AVANT que make ne décide quoi recompiler. Sans ça, context_switch.o (compilé
+# Bascule mono <-> MULTICORE : on Ã©value le variant Ã  la phase de parsing
+# (avant calcul du DAG) pour pouvoir purger les .o stale et Ã©crire le stamp
+# AVANT que make ne dÃ©cide quoi recompiler. Sans Ã§a, context_switch.o (compilÃ©
 # sans MULTICORE_CFLAGS) garde l'alias thread_yield -> thread_yield_asm et
 # entre en collision avec le thread_yield C de thread_mn.c.
 BUILD_VARIANT := $(if $(MULTICORE_CFLAGS),mn,mono)
@@ -92,7 +92,7 @@ else
 TEST_BINS = $(BASE_TEST_BINS) $(MONO_TEST_BINS)
 endif
 
-# Liste exhaustive pour le clean (indépendante du mode)
+# Liste exhaustive pour le clean (indÃ©pendante du mode)
 ALL_TEST_BINS = $(BASE_TEST_BINS) $(MONO_TEST_BINS) $(MN_TEST_BINS)
 
 TEST_PTHREAD_BINS = $(addsuffix -pthread,$(TEST_BINS))
@@ -111,11 +111,11 @@ src/%.o: src/%.S
 tests/%: tests/%.c $(LIB_NAME)
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable $< -o $@ -L. -lthread
 
-# 51-fibonacci compile la lib en statique avec -DFP activé : la déduplication
-# (dedup.h) memoïse les threads par (func, arg). C'est sémantiquement correct
-# uniquement pour des workloads purement fonctionnels (fibonacci récursif), pas
-# pour les tests où chaque thread doit produire un effet de bord distinct (61-mutex).
-# C'est pour ça que FP n'est PAS dans CFLAGS global.
+# 51-fibonacci compile la lib en statique avec -DFP activÃ© : la dÃ©duplication
+# (dedup.h) memoÃ¯se les threads par (func, arg). C'est sÃ©mantiquement correct
+# uniquement pour des workloads purement fonctionnels (fibonacci rÃ©cursif), pas
+# pour les tests oÃ¹ chaque thread doit produire un effet de bord distinct (61-mutex).
+# C'est pour Ã§a que FP n'est PAS dans CFLAGS global.
 tests/51-fibonacci: tests/51-fibonacci.c $(LIB_SRC_C) $(LIB_SRC_S)
 	$(CC) $(CFLAGS) -Wno-unused-but-set-variable -DFP $^ -o $@ $(EXTRA_LDFLAGS)
 
@@ -169,8 +169,20 @@ clean:
 multicore:
 	$(MAKE) MULTICORE=1 all
 
+# Mode multi-cÅ“ur AVEC prÃ©emption SIGALRM. Le tick Ã  50ms (cf
+# thread_mn.c::PREEMPT_INTERVAL_US) Ã©vite une fenÃªtre de race subtile entre
+# le store current=t/on_sched=1 et l'arrivÃ©e du code user â€” voir commentaire.
+# Note : le test 03-equity peut Ã©chouer (mesure fairness coop pure ; la
+# prÃ©emption ajoute du bruit au compte de yields, mÃªme rare).
+multicore-preempt:
+	$(MAKE) MULTICORE=1 EXTRA_CFLAGS="-DLIBTHREAD_MN_PREEMPT" all
+
 check-mn:
 	$(MAKE) MULTICORE=1 all
 	LD_LIBRARY_PATH=. ./scripts/run_tests_mn.sh
 
-.PHONY: all clean valgrind check pthreads graphs install pgo multicore check-mn
+check-mn-preempt:
+	$(MAKE) MULTICORE=1 EXTRA_CFLAGS="-DLIBTHREAD_MN_PREEMPT" all
+	LD_LIBRARY_PATH=. ./scripts/run_tests_mn_preempt.sh
+
+.PHONY: all clean valgrind check pthreads graphs install pgo multicore multicore-preempt check-mn check-mn-preempt
