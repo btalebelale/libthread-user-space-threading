@@ -14,7 +14,7 @@
 #error "STACK_SIZE doit être > STACK_GUARD pour la page de garde"
 #endif
 
-#define THREAD_CAP  65536
+#define THREAD_CAP  20000
 #define STACK_CAP   THREAD_CAP
 
 #define SCHED_STACK_SIZE (64 * 1024)
