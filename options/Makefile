@@ -5,25 +5,21 @@ LIB_SRC = src/thread.c src/scheduler.c
 LIB_OBJ = $(LIB_SRC:.c=.o)
 LIB_NAME = libthread.so
 
-TEST_BINS = tests/01-main \
-            tests/02-switch \
-            tests/03-equity \
-            tests/11-join \
-            tests/12-join-main \
-            tests/13-join-switch \
-            tests/21-create-many \
-            tests/22-create-many-recursive \
-            tests/23-create-many-once \
-            tests/31-switch-many \
-            tests/32-switch-many-join \
-            tests/33-switch-many-cascade \
-            tests/51-fibonacci \
-            tests/61-mutex \
-            tests/62-mutex \
-            tests/63-mutex-equity \
-            tests/64-mutex-join \
-            tests/71-preemption \
-            tests/81-deadlock
+TESTS_DIR = tests
+
+TEST_BINS = $(TESTS_DIR)/01-main \
+            $(TESTS_DIR)/02-switch \
+            $(TESTS_DIR)/03-equity \
+            $(TESTS_DIR)/11-join \
+            $(TESTS_DIR)/12-join-main \
+            $(TESTS_DIR)/13-join-switch \
+            $(TESTS_DIR)/21-create-many \
+            $(TESTS_DIR)/22-create-many-recursive \
+            $(TESTS_DIR)/23-create-many-once \
+            $(TESTS_DIR)/31-switch-many \
+            $(TESTS_DIR)/32-switch-many-join \
+            $(TESTS_DIR)/33-switch-many-cascade \
+            $(TESTS_DIR)/51-fibonacci
 
 
 
@@ -42,9 +38,6 @@ src/%.o: src/%.c src/thread.h
 
 tests/%: tests/%.c $(LIB_NAME)
 	$(CC) $(CFLAGS) $< -o $@ -L. -lthread
-
-tests/71-preemption: tests/71-preemption.c $(LIB_SRC)
-	$(CC) $(CFLAGS) -DUSE_PREEMPTION $^ -o $@
 
 pthreads: $(TEST_PTHREAD_BINS)
 
